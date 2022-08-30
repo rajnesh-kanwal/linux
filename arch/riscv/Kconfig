@@ -423,6 +423,31 @@ config RISCV_ISA_ZICBOM
 
 	   If you don't know what to do here, say Y.
 
+config RISCV_CPU_QOSID
+	bool
+	select ARCH_HAS_CPU_RESCTRL
+	select RESCTRL_FS
+	help
+	  Enables the RISCV CPU QOSID logic.
+
+config RISCV_ISA_SSQOSID
+	bool "SSQOSID extension support"
+	default y
+	select RISCV_CPU_QOSID
+	help
+	  Adds support to dynamically detect the presence of SSQOSID
+	  ISA-extension (Supervisor-mode: Quality of Service ID) and
+	  enables its usage.
+
+	  The extension allows to tag the running process with
+	  MCID(Monitoring Counter ID) and RCID(Resource Control ID).
+	  The MCID is used by the resource controllers to provide
+	  event counters, and RCID is used determine resource allocations.
+	  For example a cache controller might use them to respectively
+	  collect usage statistics and apply a cache partitioning scheme.
+
+	  If you don't know what to do here, say Y.
+
 config FPU
 	bool "FPU support"
 	default y
