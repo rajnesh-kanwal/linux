@@ -841,12 +841,11 @@ static int __init imsic_init(struct imsic_fwnode_ops *fwops,
 	tmp = IMSIC_MMIO_PAGE_SHIFT * 2;
 	rc = fwops->read_u32(fwnode, fwopaque, "riscv,group-index-shift",
 			     &global->group_index_shift);
+
+	/* If not specified assumed the default APLIC-IMSIC configuration */
 	if (rc)
 		global->group_index_shift = tmp;
-	if (global->group_index_shift < tmp) {
-		pr_err("%pfwP: group index shift too small\n", fwnode);
-		return -EINVAL;
-	}
+
 	tmp = global->group_index_bits + global->group_index_shift - 1;
 	if (tmp >= BITS_PER_LONG) {
 		pr_err("%pfwP: group index shift too big\n", fwnode);
@@ -925,14 +924,6 @@ static int __init imsic_init(struct imsic_fwnode_ops *fwops,
 		if (base_addr != global->base_addr) {
 			rc = -EINVAL;
 			pr_err("%pfwP: address mismatch for regset %d\n",
-				fwnode, i);
-			goto out_iounmap;
-		}
-
-		tmp = BIT(global->guest_index_bits) - 1;
-		if ((mmio->size / IMSIC_MMIO_PAGE_SZ) & tmp) {
-			rc = -EINVAL;
-			pr_err("%pfwP: size mismatch for regset %d\n",
 				fwnode, i);
 			goto out_iounmap;
 		}
