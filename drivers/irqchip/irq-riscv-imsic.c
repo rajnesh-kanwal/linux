@@ -973,8 +973,9 @@ static int __init imsic_init(struct imsic_fwnode_ops *fwops,
 				mmio = &priv->mmios[j];
 				break;
 			}
-
-			reloff -= priv->mmios[j].size;
+			/* MMIO region size may not be aligned if holes are present */
+			reloff -= ALIGN(priv->mmios[j].size,
+				  BIT(global->guest_index_bits) * IMSIC_MMIO_PAGE_SZ);
 		}
 		if (!mmio) {
 			pr_warn("%pfwP: MMIO not found for parent irq%d\n",
