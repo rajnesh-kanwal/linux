@@ -843,8 +843,11 @@ static int __init imsic_init(struct imsic_fwnode_ops *fwops,
 	 */
 	rc = fwops->read_u32(fwnode, fwopaque, "riscv,group-index-shift",
 			     &global->group_index_shift);
+
+	/* If not specified assumed the default APLIC-IMSIC configuration */
 	if (rc)
 		global->group_index_shift = IMSIC_MMIO_PAGE_SHIFT * 2;
+
 	tmp = global->group_index_bits + global->group_index_shift - 1;
 	if (tmp >= BITS_PER_LONG) {
 		pr_err("%pfwP: group index shift too big\n", fwnode);
