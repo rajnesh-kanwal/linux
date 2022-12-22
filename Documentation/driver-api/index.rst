@@ -110,6 +110,7 @@ available subsections can be seen below.
    xillybus
    zorro
    hte/index
+   device-authorize
 
 .. only::  subproject and html
 
