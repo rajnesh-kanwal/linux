@@ -57,6 +57,9 @@
 	    },
 	    {
                 "name": "alarmtimer"
+	    },
+	    {
+                "name": "da_test"
 	    }
         ]
     },
