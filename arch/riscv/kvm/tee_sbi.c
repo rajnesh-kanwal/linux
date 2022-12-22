@@ -83,9 +83,7 @@ int sbi_teeh_tsm_create_tvm(struct sbi_tee_tvm_create_params *tparam, unsigned l
 		goto done;
 	}
 
-	kvm_info("%s: create_tvm tvmid %lx\n", __func__, ret.value);
 	*tvmid = ret.value;
-
 done:
 	return rc;
 }
