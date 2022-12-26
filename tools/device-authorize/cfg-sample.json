@@ -1,0 +1,104 @@
+[
+    {
+        "major_ver": 0,
+        "minor_ver": 1,
+	"type": 0
+    },
+    {
+        "bus": "tty"
+    },
+    {
+        "bus": "acpi"
+    },
+    {
+        "bus": "pnp"
+    },
+    {
+        "bus": "virtio"
+    },
+    {
+        "bus": "blk"
+    },
+    {
+        "bus": "misc"
+    },
+    {
+        "bus": "serio"
+    },
+    {
+        "bus": "platform",
+        "devices": [
+            {
+                "name": "QEMU0002"
+	    },
+	    {
+                "name": "PNP0103"
+	    },
+            {
+                "name": "rtc-efi"
+	    },
+	    {
+                "name": "efivars"
+	    },
+	    {
+                "name": "regulatory"
+	    },
+	    {
+                "name": "pcspkr"
+	    },
+	    {
+                "name": "serial8250"
+	    },
+	    {
+                "name": "Fixed MDIO bus"
+	    },
+	    {
+                "name": "i8042"
+	    },
+	    {
+                "name": "alarmtimer"
+	    }
+        ]
+    },
+    {
+        "bus": "pci",
+        "devices": [
+            {
+                "vendor": "0x1af4",
+                "device": "0x1000"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1001"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1003"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1009"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1041"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1042"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1043"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1049"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1053"
+            }
+        ]
+    }
+]

@@ -1,0 +1,70 @@
+[
+    {
+        "major_ver": 0,
+        "minor_ver": 1,
+	"type": 0
+    },
+    {
+        "bus": "virtio"
+    },
+    {
+        "bus": "acpi",
+        "devices": [
+            {
+                "name": "LNXPWRBN"
+	    },
+	    {
+                "name": "ACPI0013"
+	    }
+        ]
+    },
+    {
+        "bus": "platform",
+        "devices": [
+            {
+                "name": "ACPI0013"
+	    }
+        ]
+    },
+    {
+        "bus": "pci",
+        "devices": [
+            {
+                "vendor": "0x1af4",
+                "device": "0x1000"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1001"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1003"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1009"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1041"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1042"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1043"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1049"
+            },
+	    {
+                "vendor": "0x1af4",
+                "device": "0x1053"
+            }
+        ]
+    }
+]
