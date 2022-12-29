@@ -41,10 +41,17 @@ static int gstage_page_fault(struct kvm_vcpu *vcpu, struct kvm_run *run,
 		};
 	}
 
-	ret = kvm_riscv_gstage_map(vcpu, memslot, fault_addr, hva,
-		(trap->scause == EXC_STORE_GUEST_PAGE_FAULT) ? true : false);
-	if (ret < 0)
+	if (is_tee_vcpu(vcpu)) {
+		/* TEE doesn't care about PTE prots now. No need to compute the prots */
+		ret = kvm_riscv_tee_gstage_map(vcpu, fault_addr, hva);
+	} else {
+		ret = kvm_riscv_gstage_map(vcpu, memslot, fault_addr, hva,
+			(trap->scause == EXC_STORE_GUEST_PAGE_FAULT) ? true : false);
+	}
+	if (ret < 0) {
+		kvm_err("%s: gstage tee page fault addr %lx vcpu %d\n", __func__, fault_addr, vcpu->vcpu_idx);
 		return ret;
+	}
 
 	return 1;
 }
