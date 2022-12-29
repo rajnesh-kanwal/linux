@@ -182,6 +182,50 @@ static void print_platform_da_list(void)
 		node->print_info(node);
 }
 
+/**
+ * platform_dev_authorized() - Check whether the device is in platform
+ *                             specific DA firmware allow or deny list.
+ * @dev: Struct device of the device to be checked.
+ *
+ * This helper can be used by bus drivers before device_add() or
+ * device_register() to lookup the device platform specific initialization
+ * status of the given device.
+ *
+ * Return true if the device is authorized to enumerate, false if the device is
+ * unauthorized or dev->authorized for all other cases.
+ */
+bool platform_dev_authorized(struct device *dev)
+{
+	const char *bus = dev_bus_name(dev);
+	struct da_bus_node *node;
+	bool status = false;
+
+	/* If not initialized or invalid params, return default value */
+	if (!init_done || !dev->bus || !strlen(bus))
+		return dev->authorized;
+
+	list_for_each_entry(node, &platform_da_list, list) {
+		if (!strncmp(bus, node->name, strlen(node->name))) {
+			/*
+			 * If no device entries exist for the given bus,
+			 * allow all in that bus.
+			 */
+			if (node->count)
+				status = node->match_device(node, dev);
+			else
+				status = true;
+			if (status)
+				break;
+		}
+	}
+
+	dev_dbg(dev, "Platform authorized status: %d\n", status);
+
+	/* If the list type is deny list, inverse the result */
+	return !da_list_type ? status : !status;
+}
+EXPORT_SYMBOL_GPL(platform_dev_authorized);
+
 static int __init parse_firmware_data(struct cpio_data *cpio)
 {
 	struct da_firmware_hdr *fhdr = cpio->data;
