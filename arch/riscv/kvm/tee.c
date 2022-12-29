@@ -99,11 +99,82 @@ void kvm_riscv_tee_vcpu_put(struct kvm_vcpu *vcpu)
 	/* TODO */
 }
 
+/* Inspired from pkvm_mem_abort */
 int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu, gpa_t gpa, unsigned long hva)
 {
-	/* TODO */
+	struct kvm_riscv_tee_page *tpage;
+	struct mm_struct *mm = current->mm;
+	struct kvm *kvm = vcpu->kvm;
+	//TODO: Do need a FOLL_HWPOISION like pkvm ?
+	unsigned int flags = FOLL_LONGTERM | FOLL_WRITE;
+	struct page *page;
+	int rc;
+	struct kvm_tee_tvm_context *tvmc = kvm->arch.tvmc;
+
+	tpage = kmalloc(sizeof(*tpage), GFP_KERNEL_ACCOUNT);
+	if (!tpage)
+		return -ENOMEM;
+
+	mmap_read_lock(mm);
+	rc = pin_user_pages(hva, 1, flags, &page, NULL);
+	mmap_read_unlock(mm);
+
+	//TODO: Do we need to handle -EHWPOISON here as well?
+	if (rc != 1) {
+		rc = -EFAULT;
+		goto free_tpage;
+	} else if (!PageSwapBacked(page)) {
+		rc = -EIO;
+		goto free_tpage;
+	}
+
+	spin_lock(&kvm->mmu_lock);
+	rc = tee_convert_pages(page_to_phys(page), 1, false);
+	if(rc)
+		goto unpin_page;
+
+	rc = sbi_teeh_tsm_global_fence();
+	if (rc) {
+		kvm_err("%s: global fence for TSM failed %d\n", __func__, rc);
+		goto unpin_page;
+	}
+	spin_unlock(&kvm->mmu_lock);
+	//TODO: We can't do spin lock here it sends IPI to each vcpu to initiate local fence
+	/* Initiate local fence on each online hart */
+	on_each_cpu(kvm_tee_local_fence, NULL, 1);
+
+	rc = sbi_teeh_add_zero_pages(tvmc->tvm_guest_id, page_to_phys(page),
+				     SBI_TEE_PAGE_4K, 1, gpa);
+	if (rc) {
+		pr_err("%s: Adding zero pages failed %d\n", __func__, rc);
+		goto zero_page_failed;
+	}
+	tpage->page = page;
+	tpage->npages = 1;
+	tpage->is_mapped = true;
+	tpage->gpa = gpa;
+	tpage->hva = hva;
+	INIT_LIST_HEAD(&tpage->link);
+
+	spin_lock(&kvm->mmu_lock);
+	list_add(&tpage->link, &kvm->arch.tvmc->zero_pages);
+	spin_unlock(&kvm->mmu_lock);
+
 	return 0;
+
+zero_page_failed:
+	//TODO: Do we need to reclaim the page now or VM gets destroyed ?
+
+unpin_page:
+	spin_unlock(&kvm->mmu_lock);
+	unpin_user_pages(&page, 1);
+
+free_tpage:
+	kfree(tpage);
+
+	return rc;
 }
+
 
 void kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_trap *trap)
 {
