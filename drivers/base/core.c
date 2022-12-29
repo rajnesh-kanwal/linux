@@ -3446,6 +3446,9 @@ int device_add(struct device *dev)
 
 	pr_debug("device: '%s': %s\n", dev_name(dev), __func__);
 
+	if (dev_is_authorizable(dev))
+		dev->authorized = platform_dev_authorized(dev);
+
 	parent = get_device(dev->parent);
 	kobj = get_device_parent(dev, parent);
 	if (IS_ERR(kobj)) {
