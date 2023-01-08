@@ -584,7 +584,7 @@ static void imsic_vsfile_local_update(int vsfile_hgei, u32 nr_eix,
 	csr_write(CSR_VSISELECT, old_vsiselect);
 }
 
-static void imsic_vsfile_cleanup(struct imsic *imsic)
+static void imsic_vsfile_cleanup(struct kvm_vcpu *vcpu, struct imsic *imsic)
 {
 	int old_vsfile_hgei, old_vsfile_cpu;
 	unsigned long flags;
@@ -605,8 +605,12 @@ static void imsic_vsfile_cleanup(struct imsic *imsic)
 
 	memset(imsic->swfile, 0, sizeof(*imsic->swfile));
 
-	if (old_vsfile_cpu >= 0)
+	if (old_vsfile_cpu >= 0) {
+		if (is_tee_vcpu(vcpu))
+			kvm_riscv_tee_vcpu_imsic_unbind(vcpu, old_vsfile_cpu);
+
 		kvm_riscv_aia_free_hgei(old_vsfile_cpu, old_vsfile_hgei);
+	}
 }
 
 static void imsic_swfile_extirq_update(struct kvm_vcpu *vcpu)
@@ -668,9 +672,8 @@ void kvm_riscv_vcpu_aia_imsic_release(struct kvm_vcpu *vcpu)
 {
 	unsigned long flags;
 	struct imsic_mrif tmrif;
-	int old_vsfile_hgei, old_vsfile_cpu, ret;
+	int old_vsfile_hgei, old_vsfile_cpu;
 	struct imsic *imsic = vcpu->arch.aia.imsic_state;
-	struct kvm_tee_tvm_vcpu_context *tvcpu; 
 
 	/* Read and clear IMSIC VS-file details */
 	write_lock_irqsave(&imsic->vsfile_lock, flags);
@@ -690,16 +693,7 @@ void kvm_riscv_vcpu_aia_imsic_release(struct kvm_vcpu *vcpu)
 	 * the old IMSIC VS-file so we first re-direct all interrupt
 	 * producers.
 	 */
-
-	if (is_tee_vcpu(vcpu)) {
-		tvcpu = vcpu->arch.tc;
-		if (tvcpu->imsic.bound) {
-			ret = kvm_riscv_tee_vcpu_imsic_unbind(vcpu);
-			if (ret)
-				kvm_err("imsic unbind failed for vcpu %d\n", vcpu->vcpu_idx);
-		}
-	} else {
-
+	if (!is_tee_vcpu(vcpu)) {
 		/* Purge the G-stage mapping */
 		kvm_riscv_gstage_iounmap(vcpu->kvm,
 					 vcpu->arch.aia.imsic_addr,
@@ -720,6 +714,8 @@ void kvm_riscv_vcpu_aia_imsic_release(struct kvm_vcpu *vcpu)
 
 		/* Update register state in IMSIC SW-file */
 		imsic_swfile_update(vcpu, &tmrif);
+	} else {
+		kvm_riscv_tee_vcpu_imsic_unbind(vcpu, old_vsfile_cpu);
 	}
 
 	/* Free-up old IMSIC VS-file */
@@ -1126,7 +1122,7 @@ void kvm_riscv_vcpu_aia_imsic_cleanup(struct kvm_vcpu *vcpu)
 	if (!imsic)
 		return;
 
-	imsic_vsfile_cleanup(imsic);
+	imsic_vsfile_cleanup(vcpu, imsic);
 
 	mutex_lock(&kvm->slots_lock);
 	kvm_io_bus_unregister_dev(kvm, KVM_MMIO_BUS, &imsic->iodev);

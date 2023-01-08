@@ -13,6 +13,7 @@
 #include <linux/err.h>
 #include <linux/kvm_host.h>
 #include <linux/smp.h>
+#include <linux/cpumask.h>
 #include <asm/csr.h>
 #include <asm/sbi.h>
 #include <asm/kvm_mmu.h>
@@ -230,8 +231,10 @@ int kvm_riscv_tee_vcpu_imsic_bind(struct kvm_vcpu *vcpu, unsigned long imsic_mas
 	tvmc = kvm->arch.tvmc;
 
 	ret = sbi_teei_bind_vcpu_imsic(tvmc->tvm_guest_id, vcpu->vcpu_idx, imsic_mask);
-	if (ret)
+	if (ret) {
+		kvm_err("unable to bind vcpu %d", ret);
 		return ret;
+	}
 	tvcpu->imsic.bound = true;
 
 	return 0;
@@ -443,9 +446,10 @@ void noinstr kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_t
 	}
 
 	/*
-	 * TODO: Ideally, the bind should happen in imsic during new vsfile allocation.
-	 * However, the TEEH bind call requires the TVM to be in finalized state.
-	 * Check with TSM implementation if the bind can happen before finalization.
+	 * Ideally, the bind should happen in imsic during new vsfile allocation.
+	 * However, the TEEH bind call requires the TVM to be in finalized state
+	 * in order to keep a clear distinction between states that have been
+	 * measured and added at runtime without measurement.
 	 */
 	if (tvcpu->imsic.bind_required) {
 		tvcpu->imsic.bind_required = false;
