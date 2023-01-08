@@ -8,6 +8,7 @@
  *     Atish Patra <atishp@rivosinc.com>
  */
 
+#include <linux/cpumask.h>
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/kvm_host.h>
@@ -84,9 +85,249 @@ static int tee_convert_pages(unsigned long phys_addr, unsigned long npages, bool
 	return rc;
 }
 
+static void kvm_tee_imsic_clone(void *info)
+{
+	int rc;
+	struct kvm_vcpu *vcpu = info;
+	struct kvm *kvm = vcpu->kvm;
+
+	pr_err("%s: In pcpu %d vcpu %d\n", __func__, smp_processor_id(), vcpu->vcpu_idx);
+
+	rc = sbi_teei_rebind_vcpu_imsic_clone(kvm->arch.tvmc->tvm_guest_id, vcpu->vcpu_idx);
+	if (rc)
+		kvm_err("imsic clone failed on cpu %d rc %d\n", rc, smp_processor_id());
+}
+
+static void kvm_tee_imsic_unbind(void *info)
+{
+	struct kvm_vcpu *vcpu = info;
+	struct kvm_tee_tvm_context *tvmc = vcpu->kvm->arch.tvmc;
+
+	/*TODO: We probably want to return but the remote function call doesn't allow any return */
+	if (sbi_teei_unbind_vcpu_imsic_begin(tvmc->tvm_guest_id, vcpu->vcpu_idx))
+		return;
+
+	if (sbi_teeh_tvm_initiate_fence(tvmc->tvm_guest_id))
+		return;
+
+	if(sbi_teei_unbind_vcpu_imsic_end(tvmc->tvm_guest_id, vcpu->vcpu_idx))
+		return;
+
+	kvm_info("unbind success pcpu %d vcpu %d\n", smp_processor_id(), vcpu->vcpu_idx);
+}
+
 __always_inline bool kvm_riscv_tee_enabled(void)
 {
 	return riscv_tee_enabled;
+}
+
+int kvm_riscv_tee_vcpu_imsic_addr(struct kvm_vcpu *vcpu)
+{
+	struct kvm_tee_tvm_context *tvmc;
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_vcpu_aia *vaia = &vcpu->arch.aia;
+	int ret;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	tvmc = kvm->arch.tvmc;
+
+	ret = sbi_teei_set_vcpu_imsic_addr(tvmc->tvm_guest_id, vcpu->vcpu_idx, vaia->imsic_addr);
+	if (ret)
+		return -EPERM;
+
+	return 0;
+}
+
+int kvm_riscv_tee_aia_convert_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa)
+{
+	struct kvm *kvm = vcpu->kvm;
+	int ret;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	ret = sbi_teei_convert_imsic(imsic_pa);
+	if (ret)
+		return -EPERM;
+
+	ret = kvm_riscv_tee_hfence();
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+int kvm_riscv_tee_aia_claim_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa)
+{
+	int ret;
+	struct kvm *kvm = vcpu->kvm;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	ret = sbi_teei_reclaim_imsic(imsic_pa);
+	if (ret)
+		return -EPERM;
+
+	//TODO: Do we need a hfence here ?
+
+	return 0;
+}
+
+int kvm_riscv_tee_vcpu_imsic_rebind(struct kvm_vcpu *vcpu, int old_pcpu)
+{
+	struct kvm_tee_tvm_context *tvmc;
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_tee_tvm_vcpu_context *tvcpu = vcpu->arch.tc;
+	int ret;
+	unsigned long gid, vcpuid;
+	cpumask_t tmpmask;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	tvmc = kvm->arch.tvmc;
+	gid  = tvmc->tvm_guest_id;
+	vcpuid = vcpu->vcpu_idx;
+
+	ret = sbi_teei_rebind_vcpu_imsic_begin(gid, vcpuid, BIT(tvcpu->imsic.vsfile_hgei));
+	if (ret) {
+		kvm_err("unable to rebind vcpu %d", ret);
+		return ret;
+	}
+
+	ret = sbi_teeh_tvm_initiate_fence(gid);
+	if (ret)
+		return ret;
+
+	cpumask_clear(&tmpmask);
+	cpumask_set_cpu(old_pcpu, &tmpmask);
+	on_each_cpu_mask(&tmpmask, kvm_tee_imsic_clone, vcpu, 1);
+
+	ret = sbi_teei_rebind_vcpu_imsic_end(gid, vcpuid);
+	if (ret) {
+		pr_err("%s: rebind failed %d\n", __func__, ret);
+		return ret;
+	}
+
+	tvcpu->imsic.bound = true;
+
+	return 0;
+}
+
+int kvm_riscv_tee_vcpu_imsic_bind(struct kvm_vcpu *vcpu, unsigned long imsic_mask)
+{
+	struct kvm_tee_tvm_context *tvmc;
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_tee_tvm_vcpu_context *tvcpu = vcpu->arch.tc;
+	int ret;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	tvmc = kvm->arch.tvmc;
+
+	ret = sbi_teei_bind_vcpu_imsic(tvmc->tvm_guest_id, vcpu->vcpu_idx, imsic_mask);
+	if (ret)
+		return ret;
+	tvcpu->imsic.bound = true;
+
+	return 0;
+}
+
+int kvm_riscv_tee_vcpu_imsic_unbind(struct kvm_vcpu *vcpu, int old_pcpu)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_tee_tvm_vcpu_context *tvcpu = vcpu->arch.tc;
+	cpumask_t tmpmask;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	/* No need to unbind if it is not bound already */
+	if (!tvcpu->imsic.bound)
+		return 0;
+
+	/* Do it first even if there is failure to prevent it to try again */
+	tvcpu->imsic.bound = false;
+
+	if (smp_processor_id() == old_pcpu) {
+		kvm_tee_imsic_unbind(vcpu);
+	} else {
+		/* Unbind can be invoked from a different physical cpu */
+		cpumask_clear(&tmpmask);
+		cpumask_set_cpu(old_pcpu, &tmpmask);
+		on_each_cpu_mask(&tmpmask, kvm_tee_imsic_unbind, vcpu, 1);
+	}
+
+	return 0;
+}
+
+int kvm_riscv_tee_vcpu_inject_interrupt(struct kvm_vcpu *vcpu, unsigned long iid)
+{
+	struct kvm_tee_tvm_context *tvmc;
+	struct kvm *kvm = vcpu->kvm;
+	int ret;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	tvmc = kvm->arch.tvmc;
+
+	ret = sbi_teei_inject_external_interrupt(tvmc->tvm_guest_id, vcpu->vcpu_idx, iid);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+int kvm_riscv_tee_aia_init(struct kvm *kvm)
+{
+	struct kvm_aia *aia = &kvm->arch.aia;
+	struct sbi_tee_tvm_aia_params *tvm_aia;
+	struct kvm_vcpu *vcpu;
+	struct kvm_tee_tvm_context *tvmc;
+	int ret;
+
+	if (!kvm->arch.tvmc)
+		return -EINVAL;
+
+	tvmc = kvm->arch.tvmc;
+
+	/* Sanity Check */
+	if (aia->aplic_addr != KVM_RISCV_AIA_UNDEF_ADDR)
+		return -EINVAL;
+
+	/* TVMs must have a physical guest interrut file */
+	if (aia->mode != KVM_DEV_RISCV_AIA_MODE_HWACCEL)
+		return -ENODEV;
+
+	tvm_aia = kzalloc(sizeof(*tvm_aia), GFP_KERNEL);
+	if (!tvm_aia)
+		return -ENOMEM;
+
+	 /*TODO: KVM only knows the IMSIC address of vcpus. Can the base address
+	 * be different than that ?
+	 */
+	/* Address of the IMSIC group ID, hart ID & guest ID of 0 */
+	vcpu = kvm_get_vcpu_by_id(kvm, 0);
+	tvm_aia->imsic_base_addr = vcpu->arch.aia.imsic_addr;
+
+	tvm_aia->group_index_bits = aia->nr_group_bits;
+	tvm_aia->group_index_shift = aia->nr_group_shift;
+	tvm_aia->hart_index_bits = aia->nr_hart_bits;
+	tvm_aia->guest_index_bits = aia->nr_guest_bits;
+	/* Nested TVMs are not supported yet */
+	tvm_aia->guests_per_hart = 0;
+
+
+	ret = sbi_teei_tvm_aia_init(tvmc->tvm_guest_id, tvm_aia);
+	if (ret)
+		kvm_err("TVM AIA init failed with rc %d\n", ret);
+
+	return ret;
 }
 
 void kvm_riscv_tee_vcpu_load(struct kvm_vcpu *vcpu)
@@ -199,6 +440,20 @@ void noinstr kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_t
 			return;
 		}
 		tvmc->finalized_done = true;
+	}
+
+	/*
+	 * TODO: Ideally, the bind should happen in imsic during new vsfile allocation.
+	 * However, the TEEH bind call requires the TVM to be in finalized state.
+	 * Check with TSM implementation if the bind can happen before finalization.
+	 */
+	if (tvcpu->imsic.bind_required) {
+		tvcpu->imsic.bind_required = false;
+		rc = kvm_riscv_tee_vcpu_imsic_bind(vcpu, BIT(tvcpu->imsic.vsfile_hgei));
+		if (rc) {
+			kvm_err("bind failed with rc %d\n", rc);
+			return;
+		}
 	}
 
 	rc = sbi_teeh_run_tvm_vcpu(tvmc->tvm_guest_id, vcpu->vcpu_idx);

@@ -73,10 +73,19 @@ struct kvm_riscv_tee_page {
 	unsigned long gpa;
 };
 
+struct imsic_tee_state {
+	bool bind_required;
+	bool bound;
+	int vsfile_hgei;
+};
+
 struct kvm_tee_tvm_vcpu_context {
 	struct kvm_vcpu *vcpu;
 	/* Pages storing each vcpu state of the TVM in TSM */
 	struct kvm_riscv_tee_page vcpu_state;
+
+	/* Per VCPU imsic state */
+	struct imsic_tee_state imsic;
 };
 
 struct kvm_tee_tvm_context {
@@ -138,6 +147,16 @@ void kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_trap *tra
 int kvm_riscv_tee_vm_measure_pages(struct kvm *kvm, struct kvm_riscv_tee_measure_region *mr);
 int kvm_riscv_tee_vm_add_memreg(struct kvm *kvm, unsigned long gpa, unsigned long size);
 int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu, gpa_t gpa, unsigned long hva);
+
+/* AIA related tee function */
+int kvm_riscv_tee_aia_init(struct kvm *kvm);
+int kvm_riscv_tee_vcpu_inject_interrupt(struct kvm_vcpu *vcpu, unsigned long iid);
+int kvm_riscv_tee_vcpu_imsic_unbind(struct kvm_vcpu *vcpu, int old_cpu);
+int kvm_riscv_tee_vcpu_imsic_bind(struct kvm_vcpu *vcpu, unsigned long imsic_mask);
+int kvm_riscv_tee_vcpu_imsic_rebind(struct kvm_vcpu *vcpu, int old_pcpu);
+int kvm_riscv_tee_aia_claim_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa);
+int kvm_riscv_tee_aia_convert_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa);
+int kvm_riscv_tee_vcpu_imsic_addr(struct kvm_vcpu *vcpu);
 #else
 static inline bool kvm_riscv_tee_enabled(void) {return false ;};
 static inline int kvm_riscv_tee_init(void) { return -1;}
@@ -158,6 +177,16 @@ static inline int kvm_riscv_tee_vm_add_memreg(struct kvm *kvm, unsigned long gpa
 static inline int kvm_riscv_tee_vm_measure_pages(struct kvm *kvm, struct kvm_riscv_tee_measure_region *mr) {return -1;}
 static inline int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu,
 					   gpa_t gpa, unsigned long hva) {return -1;}
+
+/* AIA related TEE functions */
+static inline int kvm_riscv_tee_aia_init(struct kvm *kvm) {return -1;}
+static inline int kvm_riscv_tee_vcpu_inject_interrupt(struct kvm_vcpu *vcpu, unsigned long iid) {return -1;}
+static inline int kvm_riscv_tee_vcpu_imsic_unbind(struct kvm_vcpu *vcpu, int old_cpu) {return -1;}
+static inline int kvm_riscv_tee_vcpu_imsic_bind(struct kvm_vcpu *vcpu, unsigned long imsic_mask) {return -1;}
+static inline int kvm_riscv_tee_aia_claim_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa) {return -1;}
+static inline int kvm_riscv_tee_aia_convert_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa) {return -1;}
+static inline int kvm_riscv_tee_vcpu_imsic_addr(struct kvm_vcpu *vcpu) {return -1;}
+static inline int kvm_riscv_tee_vcpu_imsic_rebind(struct kvm_vcpu *vcpu, int old_pcpu) {return -1;}
 #endif /* CONFIG_RISCV_TEE_VM */
 
 #endif /* __KVM_RISCV_TEE_H */
