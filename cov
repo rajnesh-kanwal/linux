@@ -1,0 +1,76 @@
+This patch series introduces the confidential computing support for RISC-V. This is a very early WIP work.
+We want to share this with the community to get any feedback on overall architecture and direction.
+Any other feedback is welcome too.
+
+
+The detailed AP-TEE architecture document can be found here:
+
+The various related SBI extensions can be found here.
+
+
+The TSM project is written in rust and can be found here:
+
+
+Nomenclature:
+TEEH - TEE host side interface
+TEEG - TEE Guest side interface
+TEEI - TEE Interrupt related extension
+NACL - Nested acceleration extension
+TSM  - Trusted security module
+TVM  - Trusted VM
+
+** The interrupt related extension had both host and guest side requirement. Thus,
+it was kept as a separate extension for now.
+
+
+These specifications are also in draft stages and are subjected to change from the
+feedback from the community.
+
+
+AP-TEE Architecture:
+====================
+
+
+Basic TVM creation/destroy sequence:
+====================================
+
+
+TVM Interrupt management:
+=========================
+
+
+
+TVM VCPU migration:
+===================
+
+
+Shared memory management from TVM:
+=================================
+
+
+MMIO region management from TVM:
+================================
+
+
+As this is a very early work, the todo list is quite long :)
+
+1. Support fd based private memory interface proposed in
+   https://lkml.org/lkml/2022/1/18/395
+2. Finalize the ioremap hardening approach (if this is the correct direction)
+
+3. SBI DBCN console support
+
+4. HGATP/VMID update
+
+5. VM destroy
+
+6. vcpu create
+
+7. IOMMU integration
+
+8. Verify with other virtio devices such as network or storage
+
+9. TEE I/O
+
+
+
