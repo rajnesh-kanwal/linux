@@ -13,6 +13,8 @@
 #include <asm/kvm_nacl.h>
 #include <asm/kvm_cove_sbi.h>
 #include <asm/kvm_vcpu_sbi.h>
+#include <asm/asm-offsets.h>
+#include <asm/kvm_cove.h>
 
 #ifndef CONFIG_RISCV_SBI_V01
 static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_v01 = {
@@ -26,6 +28,14 @@ static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_v01 = {
 extern const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_pmu;
 #else
 static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_pmu = {
+	.extid_start = -1UL,
+	.extid_end = -1UL,
+	.handler = NULL,
+};
+#endif
+
+#ifndef CONFIG_RISCV_COVE_HOST
+static const struct kvm_vcpu_sbi_extension vcpu_sbi_ext_covg = {
 	.extid_start = -1UL,
 	.extid_end = -1UL,
 	.handler = NULL,
@@ -81,6 +91,10 @@ static const struct kvm_riscv_sbi_extension_entry sbi_ext[] = {
 	{
 		.dis_idx = KVM_RISCV_SBI_EXT_VENDOR,
 		.ext_ptr = &vcpu_sbi_ext_vendor,
+	},
+	{
+		.dis_idx = KVM_RISCV_SBI_EXT_COVG,
+		.ext_ptr = &vcpu_sbi_ext_covg,
 	},
 };
 
@@ -249,6 +263,10 @@ int kvm_riscv_cove_vcpu_sbi_ecall(struct kvm_vcpu *vcpu, struct kvm_run *run)
 	nshmem = nacl_shmem();
 	cp->a0 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A0);
 	cp->a1 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A1);
+	cp->a2 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A2);
+	cp->a3 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A3);
+	cp->a4 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A4);
+	cp->a5 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A5);
 	cp->a6 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A6);
 	cp->a7 = nacl_shmem_gpr_read_cove(nshmem, KVM_ARCH_GUEST_A7);
 
@@ -259,8 +277,10 @@ int kvm_riscv_cove_vcpu_sbi_ecall(struct kvm_vcpu *vcpu, struct kvm_run *run)
 #endif
 
 	sbi_ext = kvm_vcpu_sbi_find_ext(vcpu, cp->a7);
-	if ((sbi_ext && sbi_ext->handler) && ((cp->a7 == SBI_EXT_DBCN) ||
-	    (cp->a7 == SBI_EXT_HSM) || (cp->a7 == SBI_EXT_SRST) || ext_is_01)) {
+	if ((sbi_ext && sbi_ext->handler) &&
+	    ((cp->a7 == SBI_EXT_DBCN) || (cp->a7 == SBI_EXT_HSM) ||
+	     (cp->a7 == SBI_EXT_COVG) || (cp->a7 == SBI_EXT_SRST) ||
+	     ext_is_01)) {
 		ret = sbi_ext->handler(vcpu, run, &out_val, NULL, &userspace_exit);
 	} else {
 		kvm_err("%s: SBI EXT %lx not supported for TVM\n", __func__, cp->a7);
