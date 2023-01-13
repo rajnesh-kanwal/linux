@@ -31,6 +31,9 @@
 
 #define get_order_num_pages(n) (get_order(n << PAGE_SHIFT))
 
+#define get_gpr_index(goffset) \
+	((goffset - KVM_ARCH_GUEST_ZERO) / (__riscv_xlen / 8))
+
 /* This is part of UABI. DO NOT CHANGE IT */
 struct kvm_riscv_tee_measure_region {
 	/* Address of the user space where the VM code/data resides */
@@ -60,13 +63,12 @@ struct kvm_riscv_tee_page {
 	/* number of pages allocated for page */
 	unsigned long npages;
 
-	/* Described the page type */
 	unsigned long ptype;
 
 	/* set if the page is mapped in guest physical address */
 	bool is_mapped;
 
-	/* The below two fileds are only valid if is_mapped is true */
+	/* The below two fields are only valid if is_mapped is true */
 	/* host virtual address for the mapping */
 	unsigned long hva;
 	/* guest physical address for the mapping */
@@ -153,6 +155,10 @@ int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu, gpa_t gpa, unsigned long hva
 /* Fence related function */
 int kvm_riscv_tee_tvm_fence(struct kvm_vcpu *vcpu);
 
+/* Page share/unshare functions */
+int kvm_riscv_tee_share_page(struct kvm_vcpu *vcpu, gpa_t gpa);
+int kvm_riscv_tee_unshare_page(struct kvm_vcpu *vcpu, gpa_t gpa);
+
 /* AIA related tee function */
 int kvm_riscv_tee_aia_init(struct kvm *kvm);
 int kvm_riscv_tee_vcpu_inject_interrupt(struct kvm_vcpu *vcpu, unsigned long iid);
@@ -182,6 +188,15 @@ static inline int kvm_riscv_tee_vm_add_memreg(struct kvm *kvm, unsigned long gpa
 static inline int kvm_riscv_tee_vm_measure_pages(struct kvm *kvm, struct kvm_riscv_tee_measure_region *mr) {return -1;}
 static inline int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu,
 					   gpa_t gpa, unsigned long hva) {return -1;}
+
+static inline int kvm_riscv_tee_share_page(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	return -1;
+}
+static inline int kvm_riscv_tee_unshare_page(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	return -1;
+}
 
 /* AIA related TEE functions */
 static inline int kvm_riscv_tee_aia_init(struct kvm *kvm) {return -1;}

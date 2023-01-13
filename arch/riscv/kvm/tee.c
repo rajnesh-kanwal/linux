@@ -486,6 +486,149 @@ free_tpage:
 	return rc;
 }
 
+static int __tee_share_donated_page(struct kvm_vcpu *vcpu, gpa_t gpa,
+				    struct kvm_riscv_tee_page *tpage)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_tee_tvm_context *tvmc = kvm->arch.tvmc;
+	int rc;
+
+	rc = sbi_teeh_tsm_reclaim_page(page_to_phys(tpage->page));
+	if (rc)
+		return rc;
+
+	rc = sbi_teeh_add_shared_pages(tvmc->tvm_guest_id,
+				       page_to_phys(tpage->page),
+				       SBI_TEE_PAGE_4K, 1, gpa);
+	if (rc)
+		goto remove_page;
+
+	spin_lock(&kvm->mmu_lock);
+	list_del(&tpage->link);
+	list_add(&tpage->link, &tvmc->shared_pages);
+	spin_unlock(&kvm->mmu_lock);
+
+	return 0;
+
+remove_page:
+	/* After reclaim if page sharing fails, we must remove the page from
+	 * zero_pages list and free the tpage struct otherwise it will lead
+	 * to double reclaim when destroying the VM.
+	 */
+	spin_lock(&kvm->mmu_lock);
+	list_del(&tpage->link);
+	spin_unlock(&kvm->mmu_lock);
+	unpin_user_pages_dirty_lock(&tpage->page, 1, true);
+	kfree(tpage);
+
+	return rc;
+}
+
+static int __tee_share_page(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	unsigned long hva = gfn_to_hva(vcpu->kvm, gpa >> PAGE_SHIFT);
+	struct kvm_tee_tvm_context *tvmc = vcpu->kvm->arch.tvmc;
+	struct mm_struct *mm = current->mm;
+	struct kvm_riscv_tee_page *tpage;
+	struct page *page;
+	int rc;
+
+	if (kvm_is_error_hva(hva)) {
+		/* Address is out of the guest ram memory region. */
+		return -EINVAL;
+	}
+
+	tpage = kmalloc(sizeof(*tpage), GFP_KERNEL_ACCOUNT);
+	if (!tpage)
+		return -ENOMEM;
+
+	mmap_read_lock(mm);
+	rc = pin_user_pages(hva, 1, FOLL_LONGTERM | FOLL_WRITE, &page, NULL);
+	mmap_read_unlock(mm);
+
+	if (rc != 1) {
+		rc = -EFAULT;
+		goto free_tpage;
+	} else if (!PageSwapBacked(page)) {
+		rc = -EIO;
+		goto free_tpage;
+	}
+
+	tpage->page = page;
+	tpage->gpa = gpa;
+	tpage->hva = hva;
+	INIT_LIST_HEAD(&tpage->link);
+
+	rc = sbi_teeh_add_shared_pages(tvmc->tvm_guest_id, page_to_phys(page),
+				       SBI_TEE_PAGE_4K, 1, gpa);
+	if (rc)
+		goto unpin_page;
+
+	spin_lock(&vcpu->kvm->mmu_lock);
+	list_add(&tpage->link, &tvmc->shared_pages);
+	spin_unlock(&vcpu->kvm->mmu_lock);
+
+	return 0;
+
+unpin_page:
+	unpin_user_pages(&page, 1);
+
+free_tpage:
+	kfree(tpage);
+
+	return rc;
+}
+
+int kvm_riscv_tee_share_page(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	struct kvm_tee_tvm_context *tvmc = vcpu->kvm->arch.tvmc;
+	struct kvm_riscv_tee_page *tpage, *next;
+	bool donated = false;
+
+	/* Check if the shared memory is part of the pages already assigned
+	 * to the TVM.
+	 */
+	spin_lock(&vcpu->kvm->mmu_lock);
+	list_for_each_entry_safe(tpage, next, &tvmc->zero_pages, link) {
+		if (tpage->gpa == gpa) {
+			donated = true;
+			break;
+		}
+	}
+	spin_unlock(&vcpu->kvm->mmu_lock);
+
+	if (donated)
+		return __tee_share_donated_page(vcpu, gpa, tpage);
+
+	return __tee_share_page(vcpu, gpa);
+}
+
+int kvm_riscv_tee_unshare_page(struct kvm_vcpu *vcpu, gpa_t gpa)
+{
+	struct kvm_riscv_tee_page *tpage, *next;
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_tee_tvm_context *tvmc = kvm->arch.tvmc;
+	struct page *page = NULL;
+
+	spin_lock(&kvm->mmu_lock);
+	list_for_each_entry_safe(tpage, next, &tvmc->shared_pages, link) {
+		if (tpage->gpa == gpa) {
+			list_del(&tpage->link);
+			page = tpage->page;
+			kfree(tpage);
+			break;
+		}
+	}
+	spin_unlock(&kvm->mmu_lock);
+
+	if (unlikely(!page))
+		return -EINVAL;
+
+	unpin_user_pages_dirty_lock(&page, 1, true);
+
+	return 0;
+}
+
 void noinstr kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_trap *trap)
 {
 	int rc;
@@ -777,8 +920,8 @@ void kvm_riscv_tee_vm_destroy(struct kvm *kvm)
 	/* Free list of pages allocated for TVM operation */
 	tee_delete_page_list(kvm, &tvmc->measured_pages, false);
 	tee_delete_page_list(kvm, &tvmc->zero_pages, true);
-	tee_delete_page_list(kvm, &tvmc->shared_pages, true);
 	tee_delete_page_list(kvm, &tvmc->reclaim_pending_pages, false);
+	tee_delete_shared_pinned_page_list(kvm, &tvmc->shared_pages);
 
 	/* Reclaim and Free the pages for tvm state management */
 	rc = sbi_teeh_tsm_reclaim_pages(page_to_phys(tvmc->tvm_state.page), tvmc->tvm_state.npages);
