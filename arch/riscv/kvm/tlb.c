@@ -15,6 +15,7 @@
 #include <asm/hwcap.h>
 #include <asm/insn-def.h>
 #include <asm/kvm_nacl.h>
+#include <asm/kvm_tee.h>
 
 #define has_svinval()	\
 	static_branch_unlikely(&riscv_isa_ext_keys[RISCV_ISA_EXT_KEY_SVINVAL])
@@ -24,6 +25,9 @@ void kvm_riscv_local_hfence_gvma_vmid_gpa(unsigned long vmid,
 					  unsigned long order)
 {
 	gpa_t pos;
+
+	if (kvm_riscv_tee_enabled())
+		return;
 
 	if (PTRS_PER_PTE < (gpsz >> order)) {
 		kvm_riscv_local_hfence_gvma_vmid_all(vmid);
@@ -45,6 +49,9 @@ void kvm_riscv_local_hfence_gvma_vmid_gpa(unsigned long vmid,
 
 void kvm_riscv_local_hfence_gvma_vmid_all(unsigned long vmid)
 {
+	if (kvm_riscv_tee_enabled())
+		return;
+
 	asm volatile(HFENCE_GVMA(zero, %0) : : "r" (vmid) : "memory");
 }
 
@@ -73,6 +80,10 @@ void kvm_riscv_local_hfence_gvma_gpa(gpa_t gpa, gpa_t gpsz,
 
 void kvm_riscv_local_hfence_gvma_all(void)
 {
+	/* For TVMs, TSM will take care of hfence */
+	if (kvm_riscv_tee_enabled())
+		return;
+
 	asm volatile(HFENCE_GVMA(zero, zero) : : : "memory");
 }
 
@@ -165,6 +176,7 @@ void kvm_riscv_local_tlb_sanitize(struct kvm_vcpu *vcpu)
 	    vcpu->arch.last_exit_cpu == vcpu->cpu)
 		return;
 
+	kvm_riscv_local_hfence_gvma_vmid_all(vmid);
 	/*
 	 * On RISC-V platforms with hardware VMID support, we share same
 	 * VMID for all VCPUs of a particular Guest/VM. This means we might
@@ -177,7 +189,6 @@ void kvm_riscv_local_tlb_sanitize(struct kvm_vcpu *vcpu)
 	 */
 
 	vmid = READ_ONCE(vcpu->kvm->arch.vmid.vmid);
-	kvm_riscv_local_hfence_gvma_vmid_all(vmid);
 }
 
 void kvm_riscv_fence_i_process(struct kvm_vcpu *vcpu)
