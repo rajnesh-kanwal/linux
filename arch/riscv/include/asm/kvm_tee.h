@@ -86,6 +86,8 @@ struct kvm_tee_tvm_vcpu_context {
 
 	/* Per VCPU imsic state */
 	struct imsic_tee_state imsic;
+
+	bool is_blocked;
 };
 
 struct kvm_tee_tvm_context {
