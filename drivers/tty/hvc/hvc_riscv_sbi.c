@@ -12,8 +12,14 @@
 #include <linux/types.h>
 
 #include <asm/sbi.h>
+#include <asm/tvm.h>
+#include <asm/teeg_sbi.h>
 
 #include "hvc_console.h"
+
+static void *dbcn_buf;
+static phys_addr_t dbcn_buf_pa;
+#define DBCN_BOUNCE_BUF_SIZE PAGE_SIZE
 
 #ifdef CONFIG_RISCV_SBI_V01
 static int hvc_sbi_tty_put(uint32_t vtermno, const char *buf, int count)
@@ -51,6 +57,35 @@ static int hvc_sbi_tty_get(uint32_t vtermno, char *buf, int count)
 }
 #endif
 
+static int hvc_sbi_dbcn_tty_put_secure(const char *s, unsigned n)
+{
+	struct sbiret ret;
+	unsigned off = 0;
+
+	while (off < n) {
+		const unsigned rem = n - off;
+		const unsigned size =
+			rem > DBCN_BOUNCE_BUF_SIZE ? DBCN_BOUNCE_BUF_SIZE : rem;
+
+		memcpy(dbcn_buf, &s[off], size);
+
+		ret = sbi_ecall(SBI_EXT_DBCN, SBI_EXT_DBCN_CONSOLE_PUTS,
+#ifdef CONFIG_32BIT
+				size, dbcn_buf_pa, (u64)dbcn_buf_pa >> 32,
+#else
+				size, dbcn_buf_pa, 0,
+#endif
+				0, 0, 0);
+
+		if (ret.error)
+			return off;
+
+		off += size;
+	}
+
+	return n;
+}
+
 static int hvc_sbi_dbcn_tty_put(uint32_t vtermno, const char *buf, int count)
 {
 	phys_addr_t pa;
@@ -60,6 +95,11 @@ static int hvc_sbi_dbcn_tty_put(uint32_t vtermno, const char *buf, int count)
 		pa = page_to_phys(vmalloc_to_page(buf)) + offset_in_page(buf);
 	else
 		pa = __pa(buf);
+
+	if (is_secure_guest()) {
+		/* TODO: DO we need to reset the DBCN buffer? */
+		return hvc_sbi_dbcn_tty_put_secure(buf, count);
+	}
 
 	ret = sbi_ecall(SBI_EXT_DBCN, SBI_EXT_DBCN_CONSOLE_PUTS,
 #ifdef CONFIG_32BIT
@@ -86,9 +126,27 @@ static int __init hvc_sbi_init(void)
 
 	if ((sbi_spec_version >= sbi_mk_version(1, 0)) &&
 	    (sbi_probe_extension(SBI_EXT_DBCN) > 0)) {
+		if (is_secure_guest()) {
+			struct page *dbcn_page = alloc_pages(
+				GFP_KERNEL, get_order(DBCN_BOUNCE_BUF_SIZE));
+			if (!dbcn_page)
+				return -ENOMEM;
+
+			dbcn_buf = page_to_virt(dbcn_page);
+			dbcn_buf_pa = page_to_phys(dbcn_page);
+			err = sbi_teeg_share_memory(dbcn_buf_pa,
+						    DBCN_BOUNCE_BUF_SIZE);
+			if (err) {
+				pr_err("Sharing HVC debug console buffer failed %d.\n",
+				       err);
+				return err;
+			}
+		}
+
 		err = PTR_ERR_OR_ZERO(hvc_alloc(0, 0, &hvc_sbi_dbcn_ops, 16));
 		if (err)
 			return err;
+
 		hvc_instantiate(0, 0, &hvc_sbi_dbcn_ops);
 	} else {
 #ifdef CONFIG_RISCV_SBI_V01
@@ -104,3 +162,20 @@ static int __init hvc_sbi_init(void)
 	return 0;
 }
 device_initcall(hvc_sbi_init);
+
+static void __exit hvc_sbi_deinit(void)
+{
+	if (is_secure_guest()) {
+		int err = sbi_teeg_unshare_memory(dbcn_buf_pa,
+						  DBCN_BOUNCE_BUF_SIZE);
+		if (err) {
+			pr_warn("Unsharing HVC debug console buffer failed %d.\n",
+				err);
+			return;
+		}
+
+		free_pages((unsigned long)dbcn_buf,
+			   get_order(DBCN_BOUNCE_BUF_SIZE));
+	}
+}
+__exitcall(hvc_sbi_deinit);
