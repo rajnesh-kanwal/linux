@@ -644,8 +644,10 @@ void kvm_riscv_tee_vcpu_destroy(struct kvm_vcpu *vcpu)
 	 */
 
 	rc = sbi_teeh_tsm_reclaim_pages(tvcpuc->vcpu_state.pgr_phys, tvcpuc->vcpu_state.num_pages);
-	if (rc)
+	if (rc) {
 		kvm_err("Memory reclaim failed with rc %d\n", rc);
+		return;
+	}
 
 	/* Free the allocated pages now */
 	free_pages((unsigned long)tvcpuc->vcpu_state.pgr, get_order_num_pages(tvcpuc->vcpu_state.num_pages));
@@ -874,7 +876,7 @@ void kvm_riscv_tee_vm_destroy(struct kvm *kvm)
 		return;
 	}
 	/* Reclaim all pages first */
-	pgdr.num_pages = gstage_gpa_size >> PAGE_SHIFT;
+	pgdr.num_pages = gstage_pgd_size >> PAGE_SHIFT;
 	pgdr.pgr_phys = kvm->arch.pgd_phys;
 	pgdr.ptype = kvm_tee_map_ptype(PAGE_SIZE);
 
@@ -896,7 +898,8 @@ void kvm_riscv_tee_vm_destroy(struct kvm *kvm)
 
 	/* Free all the pages allocated due to TEE*/
 	free_pages((unsigned long)tvmc->pgtable.pgr, get_order_num_pages(tvmc->pgtable.num_pages));
-	free_pages((unsigned long)tvmc->tvm_state.pgr, get_order_num_pages(tvmc->pgtable.num_pages));
+	free_pages((unsigned long)tvmc->tvm_state.pgr,
+		   get_order_num_pages(tvmc->tvm_state.num_pages));
 
 	kfree(tvmc);
 

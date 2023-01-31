@@ -285,7 +285,8 @@ int kvm_riscv_tee_vcpu_sbi_ecall(struct kvm_vcpu *vcpu, struct kvm_run *run)
 	sbi_ext = kvm_vcpu_sbi_find_ext(vcpu, cp->a7);
 	if ((sbi_ext && sbi_ext->handler) &&
 	    ((cp->a7 == SBI_EXT_DBCN) || (cp->a7 == SBI_EXT_HSM) ||
-	     (cp->a7 == SBI_EXT_TEEG) || ext_is_01)) {
+	     (cp->a7 == SBI_EXT_TEEG) || (cp->a7 == SBI_EXT_SRST) ||
+	     ext_is_01)) {
 		ret = sbi_ext->handler(vcpu, run, &out_val, NULL, &userspace_exit);
 	} else {
 		kvm_err("%s: SBI EXT %lx not supported for TVM\n", __func__, cp->a7);
