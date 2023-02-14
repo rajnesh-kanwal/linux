@@ -595,6 +595,7 @@ void noinstr kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_t
 	struct kvm_cpu_context *cntx = &vcpu->arch.guest_context;
 	void *nshmem;
 	struct kvm_tee_tvm_vcpu_context *tvcpu = vcpu->arch.tc;
+	struct kvm_guest_timer *gt = &kvm->arch.timer;
 
 	if (!kvm->arch.tvmc)
 		return;
@@ -635,6 +636,13 @@ void noinstr kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_t
 		kvm_err("TVM run failed vcpu id %d with rc %d\n", vcpu->vcpu_idx, rc);
 		return;
 	}
+
+	/* Read htimedelta from shmem. Given it's written by TSM only when we
+	 * run first VCPU, we need to update this here rather than in timer
+	 * init.
+	 */
+	if (!gt->time_delta)
+		gt->time_delta = nacl_shmem_csr_read(nshmem, CSR_HTIMEDELTA);
 
 	trap->htinst = nacl_shmem_csr_read(nshmem, CSR_HTINST);
 	trap->htval = nacl_shmem_csr_read(nshmem, CSR_HTVAL);
