@@ -814,14 +814,20 @@ int kvm_riscv_vcpu_aia_imsic_update(struct kvm_vcpu *vcpu)
 	/* Now bind the new vsfile for the TVMs */
 	if (is_tee_vcpu(vcpu) && vcpu->arch.tc) {
 		vcpu->arch.tc->imsic.vsfile_hgei = new_vsfile_hgei;
-		pr_err("%s: new bind requested for vcpu %d vsfile %d pcpu %d\n",
-			__func__, vcpu->vcpu_idx, new_vsfile_hgei, smp_processor_id());
+		//pr_err("%s: new bind requested for vcpu %d vsfile %d pcpu %d\n",
+		//	__func__, vcpu->vcpu_idx, new_vsfile_hgei, smp_processor_id());
 		if (old_vsfile_cpu >= 0 && vcpu->arch.tc->imsic.bound) {
+			preempt_disable();
+			local_irq_enable();
 			ret = kvm_riscv_tee_vcpu_imsic_rebind(vcpu, old_vsfile_cpu);
 			if (ret) {
+				local_irq_disable();
+				preempt_enable();
 				kvm_err("imsic rebind failed for vcpu %d ret %d\n", vcpu->vcpu_idx, ret);
 				goto fail_free_vsfile_hgei;
 			}
+			local_irq_disable();
+			preempt_enable();
 			ret = kvm_riscv_aia_free_hgei(old_vsfile_cpu, old_vsfile_hgei);
 			/* TODO: Should we return TEE specific entry failure reason */
 			if (ret)
