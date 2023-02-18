@@ -64,18 +64,37 @@ static void tee_delete_shared_pinned_page_list(struct kvm *kvm, struct list_head
 	}
 }
 
-int kvm_riscv_tee_hfence(void)
+static int kvm_riscv_tee_hfence(void)
 {
 	int rc = sbi_teeh_tsm_global_fence();
 
 	if (rc) {
-		kvm_err("global fence for TSM failed %d\n", rc);
+		kvm_err("global fence for tsm failed %d\n", rc);
 		return rc;
 	}
 
-	/* Initiate local fence on each online hart */
+	/* initiate local fence on each online hart */
 	on_each_cpu(kvm_tee_local_fence, NULL, 1);
 
+	return rc;
+}
+
+static int kvm_riscv_tee_hfence_lock(struct kvm *kvm)
+{
+	int rc;
+
+	mutex_lock(&kvm->lock);
+
+	rc = sbi_teeh_tsm_global_fence();
+	if (rc) {
+		kvm_err("global fence for tsm failed %d\n", rc);
+		goto done;
+	}
+
+	/* initiate local fence on each online hart */
+	on_each_cpu(kvm_tee_local_fence, NULL, 1);
+done:
+	mutex_unlock(&kvm->lock);
 	return rc;
 }
 
@@ -102,8 +121,6 @@ static void kvm_tee_imsic_clone(void *info)
 	int rc;
 	struct kvm_vcpu *vcpu = info;
 	struct kvm *kvm = vcpu->kvm;
-
-	pr_err("%s: In pcpu %d vcpu %d\n", __func__, smp_processor_id(), vcpu->vcpu_idx);
 
 	rc = sbi_teei_rebind_vcpu_imsic_clone(kvm->arch.tvmc->tvm_guest_id, vcpu->vcpu_idx);
 	if (rc)
@@ -164,7 +181,7 @@ int kvm_riscv_tee_aia_convert_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa)
 	if (ret)
 		return -EPERM;
 
-	ret = kvm_riscv_tee_hfence();
+	ret = kvm_riscv_tee_hfence_lock(kvm);
 	if (ret)
 		return ret;
 
@@ -225,6 +242,8 @@ int kvm_riscv_tee_vcpu_imsic_rebind(struct kvm_vcpu *vcpu, int old_pcpu)
 	}
 
 	tvcpu->imsic.bound = true;
+	pr_err("%s: rebind success vcpu %d hgei %d pcpu %d opcpu %d\n", __func__,
+	vcpu->vcpu_idx, tvcpu->imsic.vsfile_hgei, smp_processor_id(), old_pcpu);
 
 	return 0;
 }
@@ -247,6 +266,8 @@ int kvm_riscv_tee_vcpu_imsic_bind(struct kvm_vcpu *vcpu, unsigned long imsic_mas
 		return ret;
 	}
 	tvcpu->imsic.bound = true;
+	pr_err("%s: rebind success vcpu %d hgei %d pcpu %d\n", __func__,
+	vcpu->vcpu_idx, tvcpu->imsic.vsfile_hgei, smp_processor_id());
 
 	return 0;
 }
@@ -383,20 +404,19 @@ int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu, gpa_t gpa, unsigned long hva
 		goto free_tpage;
 	}
 
-	spin_lock(&kvm->mmu_lock);
 	rc = tee_convert_pages(page_to_phys(page), 1, false);
 	if(rc)
 		goto unpin_page;
 
+	mutex_lock(&kvm->lock);
 	rc = sbi_teeh_tsm_global_fence();
 	if (rc) {
-		kvm_err("%s: global fence for TSM failed %d\n", __func__, rc);
+		kvm_err("%s: global fence for TSM failed %d pcpu %d vcpu %d\n", __func__, rc, smp_processor_id(), vcpu->vcpu_idx);
 		goto unpin_page;
 	}
-	spin_unlock(&kvm->mmu_lock);
-	//TODO: We can't do spin lock here it sends IPI to each vcpu to initiate local fence
 	/* Initiate local fence on each online hart */
 	on_each_cpu(kvm_tee_local_fence, NULL, 1);
+	mutex_unlock(&kvm->lock);
 
 	rc = sbi_teeh_add_zero_pages(tvmc->tvm_guest_id, page_to_phys(page),
 				     SBI_TEE_PAGE_4K, 1, gpa);
@@ -421,7 +441,7 @@ zero_page_failed:
 	//TODO: Do we need to reclaim the page now or VM gets destroyed ?
 
 unpin_page:
-	spin_unlock(&kvm->mmu_lock);
+	mutex_unlock(&kvm->lock);
 	unpin_user_pages(&page, 1);
 
 free_tpage:
@@ -964,7 +984,7 @@ int kvm_riscv_tee_vm_init(struct kvm *kvm)
 		goto tvms_convert_failed;
 	}
 
-	rc = kvm_riscv_tee_hfence();
+	rc = kvm_riscv_tee_hfence_lock(kvm);
 	if (rc)
 		goto tvm_init_failed;
 
