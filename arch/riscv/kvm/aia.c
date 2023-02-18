@@ -20,6 +20,8 @@
 struct aia_hgei_control {
 	raw_spinlock_t lock;
 	unsigned long free_bitmap;
+	/* Tracks if a hgei is converted to be used in TVM already */
+	unsigned long nconf_bitmap;
 	struct kvm_vcpu *owners[BITS_PER_LONG];
 };
 static DEFINE_PER_CPU(struct aia_hgei_control, aia_hgei);
@@ -392,7 +394,8 @@ int kvm_riscv_aia_alloc_hgei(int cpu, struct kvm_vcpu *owner,
 			     void __iomem **hgei_va, phys_addr_t *hgei_pa)
 {
 	int ret = -ENOENT, rc;
-	unsigned long flags;
+	bool reclaim_needed = false;
+	unsigned long flags, tmp_bitmap;
 	const struct imsic_local_config *lc;
 	struct aia_hgei_control *hgctrl = per_cpu_ptr(&aia_hgei, cpu);
 	phys_addr_t imsic_hgei_pa;
@@ -402,34 +405,67 @@ int kvm_riscv_aia_alloc_hgei(int cpu, struct kvm_vcpu *owner,
 	if (!hgctrl)
 		return -ENODEV;
 
+	lc = imsic_get_local_config(cpu);
 	raw_spin_lock_irqsave(&hgctrl->lock, flags);
 
-	if (hgctrl->free_bitmap) {
-		ret = __ffs(hgctrl->free_bitmap);
-		hgctrl->free_bitmap &= ~BIT(ret);
-		hgctrl->owners[ret] = owner;
+	if (!hgctrl->free_bitmap) {
+		raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
+		goto done;
 	}
-
+	if (!is_tee_vcpu(owner)) {
+		/* Find a free one that is not converted */
+		tmp_bitmap = hgctrl->free_bitmap & hgctrl->nconf_bitmap;
+		if (tmp_bitmap > 0)
+			ret = __ffs(tmp_bitmap);
+		else {
+			/* All free ones have been converted in the past. Reclaim one now */
+			ret = __ffs(hgctrl->free_bitmap);
+			reclaim_needed = true;
+		}
+	} else {
+		ret = __ffs(hgctrl->free_bitmap);
+	}
 	raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
 
-	lc = imsic_get_local_config(cpu);
 	if (lc && ret > 0) {
 		if (hgei_va)
 			*hgei_va = lc->msi_va + (ret * IMSIC_MMIO_PAGE_SZ);
 		imsic_hgei_pa = lc->msi_pa + (ret * IMSIC_MMIO_PAGE_SZ);
+
+		if (reclaim_needed) {
+			rc = kvm_riscv_tee_aia_claim_imsic(owner, imsic_hgei_pa);
+			if (rc) {
+				kvm_err("Reclaim of imsic pa [%llx] failed for vcpu %d pcpu %d ret %d\n",
+					imsic_hgei_pa, owner->vcpu_idx, smp_processor_id(), ret);
+				return rc;
+			}
+		}
+		/* Clear the free_bitmap here incase relcaim was necessary */
+		raw_spin_lock_irqsave(&hgctrl->lock, flags);
+		hgctrl->free_bitmap &= ~BIT(ret);
+		hgctrl->owners[ret] = owner;
+		if (reclaim_needed)
+			set_bit(ret, &hgctrl->nconf_bitmap);
+		raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
+
+		if (is_tee_vcpu(owner) && test_bit(ret, &hgctrl->nconf_bitmap)) {
+			/* Convert the address to TEE memory for confidential access */
+			pr_err("%s: Converting the imsic hgei %d pa %lx vcpu %d pcpu %d\n",
+				__func__, ret, (unsigned long)imsic_hgei_pa, owner->vcpu_idx, smp_processor_id());
+			/* Temporarily enable interrupts for irq processing */
+			local_irq_enable();
+			rc = kvm_riscv_tee_aia_convert_imsic(owner, imsic_hgei_pa);
+			if (rc)
+				ret = rc;
+			else
+				clear_bit(ret, &hgctrl->nconf_bitmap);
+			local_irq_disable();
+		}
 	}
 
 	if (hgei_pa)
 		*hgei_pa = imsic_hgei_pa;
-
-	/* Convert the address to TEE memory for confidential access */
-	if (is_tee_vcpu(owner)) {
-		pr_err("%s: Converting the imsic hgei pa %lx vcpu %d pcpu %d\n",
-			__func__, (unsigned long)imsic_hgei_pa, owner->vcpu_idx, smp_processor_id());
-		rc = kvm_riscv_tee_aia_convert_imsic(owner, imsic_hgei_pa);
-		if (rc)
-			return rc;
-	}
+done:
 	return ret;
 }
 
@@ -440,7 +476,6 @@ int kvm_riscv_aia_free_hgei(int cpu, int hgei)
 	phys_addr_t imsic_hgei_pa = 0;
 	const struct imsic_local_config *lc;
 	struct kvm_vcpu *vcpu;
-	int ret;
 
 	if (!kvm_riscv_aia_available() || !hgctrl)
 		return 0;
@@ -455,25 +490,16 @@ int kvm_riscv_aia_free_hgei(int cpu, int hgei)
 				lc = imsic_get_local_config(cpu);
 				imsic_hgei_pa = lc->msi_pa + (hgei * IMSIC_MMIO_PAGE_SZ);
 			}
-			hgctrl->free_bitmap |= BIT(hgei);
-			hgctrl->owners[hgei] = NULL;
 		}
 	}
 
 	raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
 
-	/* The claim process can not be called from spin lock context as
-	 * it requires to send fence on local cpus as well.
-	 * Do we need a separate lock here ?
-	 */
-	if (imsic_hgei_pa) {
-		ret = kvm_riscv_tee_aia_claim_imsic(vcpu, imsic_hgei_pa);
-		if (ret) {
-			kvm_err("Reclaim of imsic pa [%llx] failed for vcpu %d pcpu %d ret %d\n",
-			 imsic_hgei_pa, vcpu->vcpu_idx, smp_processor_id(), ret);
-			return ret;
-		}
-	}
+	/* No need to claim the imsic vs file as it can be reused again */
+	raw_spin_lock_irqsave(&hgctrl->lock, flags);
+	hgctrl->free_bitmap |= BIT(hgei);
+	hgctrl->owners[hgei] = NULL;
+	raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
 
 	return 0;
 }
@@ -531,6 +557,8 @@ static int aia_hgei_init(void)
 			hgctrl->free_bitmap &= ~BIT(0);
 		} else
 			hgctrl->free_bitmap = 0;
+		/* By default all vsfiles are to be used for non-confidential mode */
+		hgctrl->nconf_bitmap = hgctrl->free_bitmap;
 	}
 
 	/* Find INTC irq domain */
