@@ -13,6 +13,7 @@
 #include <linux/err.h>
 #include <linux/kvm_host.h>
 #include <linux/smp.h>
+#include <linux/cpumask.h>
 #include <asm/csr.h>
 #include <asm/sbi.h>
 #include <asm/kvm_mmu.h>
