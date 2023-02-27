@@ -62,6 +62,40 @@ static void tee_delete_shared_pinned_page_list(struct kvm *kvm, struct list_head
 	}
 }
 
+
+//TODO: Add a description based after function name change
+
+int kvm_riscv_tee_tvm_fence(struct kvm_vcpu *vcpu)
+{
+	struct kvm *kvm = vcpu->kvm;
+	struct kvm_tee_tvm_context *tvmc = kvm->arch.tvmc;
+	DECLARE_BITMAP(vcpu_mask, KVM_MAX_VCPUS);
+	unsigned long i;
+	struct kvm_vcpu *temp_vcpu;
+	int ret;
+
+	if (!tvmc)
+		return -EINVAL;
+
+	ret = sbi_teeh_tvm_initiate_fence(tvmc->tvm_guest_id);
+	if (ret)
+		return ret;
+
+	bitmap_clear(vcpu_mask, 0, KVM_MAX_VCPUS);
+	kvm_for_each_vcpu(i, temp_vcpu, kvm) {
+		if (temp_vcpu != vcpu)
+			bitmap_set(vcpu_mask, i, 1);
+	}
+
+	/*
+	 * The host just needs to make sure that the running vcpus exit the
+	 * guest mode and traps into TSM so that it can issue hfence.
+	 */
+	kvm_make_vcpus_request_mask(kvm, KVM_REQ_OUTSIDE_GUEST_MODE, vcpu_mask);
+
+	return 0;
+}
+
 static int kvm_riscv_tee_hfence(void)
 {
 	int rc = sbi_teeh_tsm_global_fence();

@@ -138,6 +138,10 @@ void kvm_riscv_tee_vcpu_switchto(struct kvm_vcpu *vcpu, struct kvm_cpu_trap *tra
 int kvm_riscv_tee_vm_measure_pages(struct kvm *kvm, struct kvm_riscv_tee_measure_region *mr);
 int kvm_riscv_tee_vm_add_memreg(struct kvm *kvm, unsigned long gpa, unsigned long size);
 int kvm_riscv_tee_gstage_map(struct kvm_vcpu *vcpu, gpa_t gpa, unsigned long hva);
+
+/* Fence related function */
+int kvm_riscv_tee_tvm_fence(struct kvm_vcpu *vcpu);
+
 #else
 static inline bool kvm_riscv_tee_enabled(void) {return false ;};
 static inline int kvm_riscv_tee_init(void) { return -1;}
