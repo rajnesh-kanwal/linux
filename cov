@@ -2,14 +2,13 @@ This patch series introduces the confidential computing support for RISC-V. This
 We want to share this with the community to get any feedback on overall architecture and direction.
 Any other feedback is welcome too.
 
-
-The detailed AP-TEE architecture document can be found here:
+The detailed AP-TEE architecture document can be found here [0].
 
 The various related SBI extensions can be found here.
 
 
 The TSM project is written in rust and can be found here:
-
+https://github.com/rivosinc/salus
 
 Nomenclature:
 TEEH - TEE host side interface
@@ -22,13 +21,147 @@ TVM  - Trusted VM
 ** The interrupt related extension had both host and guest side requirement. Thus,
 it was kept as a separate extension for now.
 
-
 These specifications are also in draft stages and are subjected to change from the
 feedback from the community.
 
 
 AP-TEE Architecture:
 ====================
+
+The RISCV AP-TEE extension enables the execution of Virtual machines, while
+preventing VM state access by more privileged software, such as hypervisor.
+It allows the hypervisor to control the VM, but removes the right for
+access to the code, register state or data that is used by the VM.
+
+As shown in figure 1, the architecture comprises a HS-mode software module
+called the "TEE Security Manager" (TSM) that acts as the trusted intermediary
+between TEE and non-TEE workloads. The TSM has a minimal possible HW-attested
+footprint. The TCB (which includes the TSM and HW) enforces strict
+confidentiality and integrity security properties for workloads. It also
+isolates confidential workloads from all other platform components
+(non-confidential and confidential). The responsibility of the TSM is to enforce
+the security objectives accorded to TEE workloads. The VMM continues to manage
+the security for non-confidential workloads, and the resource and scheduling
+management functions for all workloads (confidential and nonconfidential).
+
+
+        Non secure world       |         Secure world
+                               |
+        Non                    |                     Non 
+    Virtualized |  Virtualized |   Virtualized |  Virtualized                 
+        Env     |      Env     |       Env     |      Env        --------------
+   +----------+ | +----------+ |  +----------+ | +----------+            
+   |          | | |          | |  |          | | |   TSM    | 
+   | Host Apps| | |   Apps   | |  |   Apps   | | | offloaded|        VU-Mode/
+   |  (VMM)   | | |          | |  |          | | |   Work   |         U-Mode
+   +----------+ | +----------+ |  +----------+ | +----------+
+        |       | +----------+ |  +----------+ |      |          --------------
+        |       | |          | |  |          | |      |
+        |       | |          | |  |    TVM   | |      |
+        |       | |   Guest  | |  |   Guest  | |     TBD*            VS-Mode
+     Syscalls   | +----------+ |  +----------+ |      |
+        |              |       |        |             |
+        |             SBI      |   SBI(TG-API)        |          --------------
+        |              |       |        |             | 
+  +--------------------------+ |  +-------------------------+
+  |     Host (Linux)         | |  |       Salus (TSM)       |        HS-Mode
+  +--------------------------+ |  +-------------------------+
+             |                 |            |   
+     SBI (Base+TH-API)         |     SBI (Base+TH-API)           --------------
+             |                 |            |
+  +---------------------------------------------------------+
+  |                    Firmware(OpenSBI)**                  |        M-Mode
+  +---------------------------------------------------------+
+                                                                 --------------
+ Figure 1: TEE TCB for TVM workloads.
+
+*  TSM can offload work to it's usermode. The ABI for that is
+   still in development and not yet finalized.                                                                   
+                                                                   
+** Firmware componenet is TBD. It's still under discussion about
+   how to separate firmware componenet into secure and non-secure. 
+   Secure firmware is only responsible for seucre side SBI calls and
+   world switches. Most of the non-secure SBI calls should be
+   processed by non-secure firmware. 
+
+
+Current implementation doesn't yet support the whole TEE architecture
+depicted in figure 1. We currently have implemented the model shown in
+figure 2. Difference is that TSM is a hypervisor itself and runs the
+host on top and host then can exercise TH-ABI to run trusted VMs. This is
+a POC to complete/test the AP-TEE ABI. Reason for this approach is the 
+lack of the world-switch logic in M-mode firmware which is still TBD.
+
+The main difference here is that TEEH calls are directly serviced by
+salus instead of going through M-mode firmware. Also given host is
+run as a VM on top of salus, so host can not run non-secure VMs on
+top and can only run trusted VMs using TEEH calls to salus.
+
+  +---U-mode--+ +-----VS-mode-----+ +-VS-mode-+
+  |           | |                 | |         |
+  |           | | +---VU-mode---+ | |         |
+  |   Salus   | | | VMM(crosvm) | | |  Guest  |
+  | Delegated | | +-------------+ | |         |
+  |   Tasks   | |                 | |         |
+  |           | |    Host(linux)  | |         |
+  +-----------+ +-----------------+ +---------+
+        |                |               |
+   TBD syscall      SBI (TH-API)    SBI(TG-API)
+        |                |               |
+  +-------------HS-mode-----------------------+
+  |       Salus (TSM)                         |
+  +-------------------------------------------+
+                         |
+                        SBI
+                         |
+  +----------M-mode---------------------------+
+  |       Firmware(OpenSBI)                   |
+  +-------------------------------------------+
+  
+  Figure 2: Current TEE implementation.
+
+Component description
+=====================
+1) OpenSBI:
+   Currently boots Salus from the memory where qemu loader loaded it and passes
+   the device tree to Salus.
+
+2) Salus (HS-mode hypervisor):
+
+   Responsibilities:
+    * starting the host and guests
+    * manages stage-2 translations and IOMMU configuration for guest isolation
+    * delegates some tasks such as attestation to u-mode helpers
+    * measured by the trusted firmware/RoT
+
+3) Host:
+   Normally Linux with KVM support. This is the primary operating system for
+   the device running in VS mode.
+
+   Responsibilities:
+    * Scheduling
+    * Memory allocation (except memory kept by firmware and salus at boot)
+    * Guest VM start/stop/scheduling via TEE TH-API provided by salus
+    * Device drivers and delegation
+
+4) VMM:
+   The virtual machine manager that runs in userspace of the host. Can be qemu,
+   kvmtool or crosvm.
+
+   Responsibilities:
+    * configures memory and devices for guests.
+    * runs any virtualized or para virtualized devices.
+    * runs guests with vcpu_run.
+
+5) TVM Guests:
+   VS-mode trusted operating systems started by the host.
+
+   Responsibilities:
+    * Can run confidential or shared workloads.
+    * Uses memory shared from or donated by the host
+    * scheduled by the host
+    * can start sub-guests
+    * Confidential guests use TG-API for salus/host services
 
 
 Basic TVM creation/destroy sequence:
@@ -37,40 +170,75 @@ Basic TVM creation/destroy sequence:
 
 TVM Interrupt management:
 =========================
-
-
-
-TVM VCPU migration:
-===================
-
+AP-TEE spec allows TVM to allow/deny particular interrupts to be injected by
+the host. By default all interrupts are denied. Currently TVM allows all the
+interrupts from `init_IRQ()`. This will be changed to allow selected interrupts,
+for example from virtio devices or any other devices emulated by the host.
 
 Shared memory management from TVM:
 =================================
+Shared memory is needed to support virtio devices. TVMs can choose to yield
+access to confidential memory at runtime and request shared (non-confidential)
+memory using TEEG APIs provided by the TSM.
 
+We use SWIOTLB bounce buffers to achieve this without any changes to device
+drivers. We force SWIOTLB on TVM guest and mark SWIOTLB buffer shared by
+generalizing mem_encrypt_init(). Guest is only allowed to use virtio devices
+with VIRTIO_F_ACCESS_PLATFORM and VIRTIO_F_VERSION_1 set. 
+    
+The VIRTIO_F_VERSION_1 and VIRTIO_F_ACCESS_PLATFORM features force virtio
+drivers to use the DMA API and from there we end up in SWIOTLB and use
+shared bounce buffers from SWIOTLB framework.
 
-MMIO region management from TVM:
-================================
+MMIO region emulation:
+======================
+TVM can register regions of address space as MMIO regions to be emulated by
+the host. TSM provides SBI_EXT_TEEG_ADD_MMIO_REGION and 
+SBI_EXT_TEEG_REMOVE_MMIO_REGION sbi calls in TEEG extension. Any reads or
+writes to the MMIO region after SBI_EXT_TEEG_ADD_MMIO_REGION call are forwarded
+to the host for emulation.
 
+We have taken TDX like approach and introduced ioremap_driver_hardened and
+iounmap_driver_hardened functions. Based on device authorization state the
+pci_iomap* and devm_ioremap* functions call ioremap_driver_hardened instead
+of ioremap.
 
+ioremap_driver_hardened is similar to ioremap but does an extra SBI call
+SBI_EXT_TEEG_ADD_MMIO_REGION to register the region being ioremapped for
+emulation.
+
+Running the stack
+====================
+
+To run/test the stack, you would need the following components :
+
+1) Qemu
+2) Common Host & Guest Kernel
+3) kvmtool
+4) Host RootFS with KVMTOOL and Guest Kernel
+5) Salus
+
+Instructions for building the firmware components and running the model are
+available here [1].
+
+TODOs
+=======
 As this is a very early work, the todo list is quite long :)
 
 1. Support fd based private memory interface proposed in
    https://lkml.org/lkml/2022/1/18/395
 2. Finalize the ioremap hardening approach (if this is the correct direction)
 
-3. SBI DBCN console support
+3. IOMMU integration
 
-4. HGATP/VMID update
+4. Verify with other virtio devices such as network or storage
 
-5. VM destroy
+5. TEE I/O
 
-6. vcpu create
+Links
+============
+[0] AP-TEE architecture Specification.
+    https://github.com/riscv-non-isa/riscv-ap-tee/blob/main/specification/riscv-aptee-spec.pdf
 
-7. IOMMU integration
-
-8. Verify with other virtio devices such as network or storage
-
-9. TEE I/O
-
-
-
+[1] Instructions for building all the components and running a guest.
+    https://github.com/rivosinc/cove/wiki/TEE-KVM-RISCV64-on-QEMU
