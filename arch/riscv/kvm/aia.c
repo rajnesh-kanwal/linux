@@ -426,6 +426,15 @@ int kvm_riscv_aia_alloc_hgei(int cpu, struct kvm_vcpu *owner,
 	} else {
 		ret = __ffs(hgctrl->free_bitmap);
 	}
+
+	if (lc && ret > 0) {
+		/* Clear the free_bitmap here instead in case relcaim was necessary */
+		hgctrl->free_bitmap &= ~BIT(ret);
+		hgctrl->owners[ret] = owner;
+		if (reclaim_needed)
+			set_bit(ret, &hgctrl->nconf_bitmap);
+	}
+
 	raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
 
 	if (lc && ret > 0) {
@@ -438,31 +447,29 @@ int kvm_riscv_aia_alloc_hgei(int cpu, struct kvm_vcpu *owner,
 			if (rc) {
 				kvm_err("Reclaim of imsic pa [%llx] failed for vcpu %d pcpu %d ret %d\n",
 					imsic_hgei_pa, owner->vcpu_idx, smp_processor_id(), ret);
+				kvm_riscv_aia_free_hgei(cpu, ret);
 				return rc;
 			}
-		}
-
-		/* Clear the free_bitmap here instead in case relcaim was necessary */
-		raw_spin_lock_irqsave(&hgctrl->lock, flags);
-		hgctrl->free_bitmap &= ~BIT(ret);
-		hgctrl->owners[ret] = owner;
-		if (reclaim_needed)
-			set_bit(ret, &hgctrl->nconf_bitmap);
-		raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
-
-		if (is_cove_vcpu(owner) && test_bit(ret, &hgctrl->nconf_bitmap)) {
+		} else if (is_cove_vcpu(owner) &&
+			   test_bit(ret, &hgctrl->nconf_bitmap)) {
 			/*
 			 * Convert the address to confidential mode.
 			 * This may need to send IPIs to issue global fence. Hence,
 			 * enable interrupts temporarily for irq processing
 			 */
+			preempt_disable();
 			local_irq_enable();
 			rc = kvm_riscv_cove_aia_convert_imsic(owner, imsic_hgei_pa);
-			if (rc)
-				ret = rc;
-			else
-				clear_bit(ret, &hgctrl->nconf_bitmap);
 			local_irq_disable();
+			preempt_enable();
+			if (rc) {
+				kvm_riscv_aia_free_hgei(cpu, ret);
+				ret = rc;
+			} else {
+				raw_spin_lock_irqsave(&hgctrl->lock, flags);
+				clear_bit(ret, &hgctrl->nconf_bitmap);
+				raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
+			}
 		}
 	}
 
@@ -472,38 +479,24 @@ done:
 	return ret;
 }
 
-int kvm_riscv_aia_free_hgei(int cpu, int hgei)
+void kvm_riscv_aia_free_hgei(int cpu, int hgei)
 {
-	unsigned long flags;
 	struct aia_hgei_control *hgctrl = per_cpu_ptr(&aia_hgei, cpu);
-	phys_addr_t imsic_hgei_pa = 0;
-	const struct imsic_local_config *lc;
-	struct kvm_vcpu *vcpu;
+	unsigned long flags;
 
 	if (!kvm_riscv_aia_available() || !hgctrl)
-		return 0;
+		return;
 
 	raw_spin_lock_irqsave(&hgctrl->lock, flags);
 
 	if (hgei > 0 && hgei <= kvm_riscv_aia_nr_hgei) {
 		if (!(hgctrl->free_bitmap & BIT(hgei))) {
-			vcpu = hgctrl->owners[hgei];
-			if (is_cove_vcpu(vcpu)) {
-				lc = imsic_get_local_config(cpu);
-				imsic_hgei_pa = lc->msi_pa + (hgei * IMSIC_MMIO_PAGE_SZ);
-			}
+			hgctrl->free_bitmap |= BIT(hgei);
+			hgctrl->owners[hgei] = NULL;
 		}
 	}
 
 	raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
-
-	/* No need to claim the imsic vs file as it can be reused again */
-	raw_spin_lock_irqsave(&hgctrl->lock, flags);
-	hgctrl->free_bitmap |= BIT(hgei);
-	hgctrl->owners[hgei] = NULL;
-	raw_spin_unlock_irqrestore(&hgctrl->lock, flags);
-
-	return 0;
 }
 
 void kvm_riscv_aia_wakeon_hgei(struct kvm_vcpu *owner, bool enable)
