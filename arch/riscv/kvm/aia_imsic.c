@@ -824,10 +824,7 @@ int kvm_riscv_vcpu_aia_imsic_update(struct kvm_vcpu *vcpu)
 			}
 			local_irq_disable();
 			preempt_enable();
-			ret = kvm_riscv_aia_free_hgei(old_vsfile_cpu, old_vsfile_hgei);
-			/* TODO: We should return CoVE specific entry failure reason */
-			if (ret)
-				return ret;
+			kvm_riscv_aia_free_hgei(old_vsfile_cpu, old_vsfile_hgei);
 		} else {
 			/* Bind if it is not a migration case */
 			vcpu->arch.tc->imsic.bind_required = true;

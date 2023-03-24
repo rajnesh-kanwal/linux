@@ -25,6 +25,8 @@ struct sbi_cove_tvm_create_params params;
 
 static bool riscv_cove_enabled;
 
+static DEFINE_SPINLOCK(cove_fence_lock);
+
 static void kvm_cove_local_fence(void *info)
 {
 	int rc;
@@ -65,24 +67,9 @@ static void cove_delete_page_list(struct kvm *kvm, struct list_head *tpages, boo
 
 static int kvm_riscv_cove_hfence(void)
 {
-	int rc = sbi_covh_tsm_initiate_fence();
-
-	if (rc) {
-		kvm_err("initiate fence for tsm failed %d\n", rc);
-		return rc;
-	}
-
-	/* initiate local fence on each online hart */
-	on_each_cpu(kvm_cove_local_fence, NULL, 1);
-
-	return rc;
-}
-
-static int kvm_riscv_cove_hfence_lock(struct kvm *kvm)
-{
 	int rc;
 
-	mutex_lock(&kvm->lock);
+	spin_lock(&cove_fence_lock);
 
 	rc = sbi_covh_tsm_initiate_fence();
 	if (rc) {
@@ -93,7 +80,7 @@ static int kvm_riscv_cove_hfence_lock(struct kvm *kvm)
 	/* initiate local fence on each online hart */
 	on_each_cpu(kvm_cove_local_fence, NULL, 1);
 done:
-	mutex_unlock(&kvm->lock);
+	spin_unlock(&cove_fence_lock);
 	return rc;
 }
 
@@ -217,7 +204,7 @@ int kvm_riscv_cove_aia_convert_imsic(struct kvm_vcpu *vcpu, phys_addr_t imsic_pa
 	if (ret)
 		return -EPERM;
 
-	ret = kvm_riscv_cove_hfence_lock(kvm);
+	ret = kvm_riscv_cove_hfence();
 	if (ret)
 		return ret;
 
@@ -436,21 +423,9 @@ static int kvm_riscv_cove_gstage_map(struct kvm_vcpu *vcpu, gpa_t gpa,
 		goto free_tpage;
 	}
 
-	rc = cove_convert_pages(page_to_phys(page), 1, false);
+	rc = cove_convert_pages(page_to_phys(page), 1, true);
 	if (rc)
 		goto unpin_page;
-
-	mutex_lock(&kvm->lock);
-	rc = sbi_covh_tsm_initiate_fence();
-	if (rc) {
-		mutex_unlock(&kvm->lock);
-		kvm_err("%s: initiate fence for TSM failed %d pcpu %d vcpu %d\n",
-			__func__, rc, smp_processor_id(), vcpu->vcpu_idx);
-		goto unpin_page;
-	}
-	/* Initiate local fence on each online hart */
-	on_each_cpu(kvm_cove_local_fence, NULL, 1);
-	mutex_unlock(&kvm->lock);
 
 	rc = sbi_covh_add_zero_pages(tvmc->tvm_guest_id, page_to_phys(page),
 				     SBI_COVE_PAGE_4K, 1, gpa);
@@ -885,7 +860,7 @@ int kvm_riscv_cove_vm_init(struct kvm *kvm)
 		goto tvms_convert_failed;
 	}
 
-	rc = kvm_riscv_cove_hfence_lock(kvm);
+	rc = kvm_riscv_cove_hfence();
 	if (rc)
 		goto tvm_init_failed;
 
