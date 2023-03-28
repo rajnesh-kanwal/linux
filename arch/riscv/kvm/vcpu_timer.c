@@ -309,21 +309,23 @@ void kvm_riscv_vcpu_timer_restore(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu_timer *t = &vcpu->arch.timer;
 
-	kvm_riscv_vcpu_update_timedelta(vcpu);
+	if (!is_cove_vcpu(vcpu)) {
+		kvm_riscv_vcpu_update_timedelta(vcpu);
 
-	if (!t->sstc_enabled)
-		return;
+		if (!t->sstc_enabled)
+			return;
 
 #if defined(CONFIG_32BIT)
-	nacl_csr_write(CSR_VSTIMECMP, (u32)t->next_cycles);
-	nacl_csr_write(CSR_VSTIMECMPH, (u32)(t->next_cycles >> 32));
+		nacl_csr_write(CSR_VSTIMECMP, (u32)t->next_cycles);
+		nacl_csr_write(CSR_VSTIMECMPH, (u32)(t->next_cycles >> 32));
 #else
-	nacl_csr_write(CSR_VSTIMECMP, t->next_cycles);
+		nacl_csr_write(CSR_VSTIMECMP, t->next_cycles);
 #endif
 
-	/* timer should be enabled for the remaining operations */
-	if (unlikely(!t->init_done))
-		return;
+		/* timer should be enabled for the remaining operations */
+		if (unlikely(!t->init_done))
+			return;
+	}
 
 	kvm_riscv_vcpu_timer_unblocking(vcpu);
 }
