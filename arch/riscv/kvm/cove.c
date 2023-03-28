@@ -190,7 +190,7 @@ int kvm_riscv_cove_vcpu_imsic_addr(struct kvm_vcpu *vcpu)
 {
 	struct kvm_cove_tvm_context *tvmc;
 	struct kvm *kvm = vcpu->kvm;
-	struct kvm_vcpu_aia *vaia = &vcpu->arch.aia;
+	struct kvm_vcpu_aia *vaia = &vcpu->arch.aia_context;
 	int ret;
 
 	if (!kvm->arch.tvmc)
@@ -380,7 +380,7 @@ int kvm_riscv_cove_aia_init(struct kvm *kvm)
 
 	/* Address of the IMSIC group ID, hart ID & guest ID of 0 */
 	vcpu = kvm_get_vcpu_by_id(kvm, 0);
-	tvm_aia->imsic_base_addr = vcpu->arch.aia.imsic_addr;
+	tvm_aia->imsic_base_addr = vcpu->arch.aia_context.imsic_addr;
 
 	tvm_aia->group_index_bits = aia->nr_group_bits;
 	tvm_aia->group_index_shift = aia->nr_group_shift;

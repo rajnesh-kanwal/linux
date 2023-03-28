@@ -1007,7 +1007,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 #ifdef CONFIG_32BIT
 		nacl_shmem_csr_write(nshmem, CSR_HENVCFGH, henvcfg >> 32);
 #endif
-	} else {
+	} else if (!is_cove_vcpu(vcpu)) {
 		csr_write(CSR_VSSTATUS, csr->vsstatus);
 		csr_write(CSR_VSIE, csr->vsie);
 		csr_write(CSR_VSTVEC, csr->vstvec);
@@ -1214,6 +1214,8 @@ static void noinstr kvm_riscv_vcpu_enter_exit(struct kvm_vcpu *vcpu,
 		trap->htval = nacl_shmem_csr_read(nshmem, CSR_HTVAL);
 		trap->htinst = nacl_shmem_csr_read(nshmem, CSR_HTINST);
 	} else if (is_cove_vcpu(vcpu)) {
+		nshmem = nacl_shmem();
+
 		kvm_riscv_cove_vcpu_switchto(vcpu, trap);
 
 		trap->htval = nacl_shmem_csr_read(nshmem, CSR_HTVAL);
