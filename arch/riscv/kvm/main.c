@@ -43,6 +43,7 @@ int kvm_arch_hardware_enable(void)
 	csr_write(CSR_HCOUNTEREN, 0x02);
 
 	csr_write(CSR_HVIP, 0);
+	csr_set(CSR_HVIEN, 1 << 15);
 
 	kvm_riscv_aia_enable();
 

@@ -31,13 +31,25 @@ static asmlinkage void riscv_intc_irq(struct pt_regs *regs)
 	generic_handle_domain_irq(intc_domain, cause);
 }
 
+uint64_t send_to_vs = 0;
+
 static asmlinkage void riscv_intc_aia_irq(struct pt_regs *regs)
 {
 	unsigned long topi;
 
-	while ((topi = csr_read(CSR_TOPI)))
+	while ((topi = csr_read(CSR_TOPI))) {
+		if ((topi >> TOPI_IID_SHIFT) >= 14 &&
+		    (topi >> TOPI_IID_SHIFT) <= 16) {
+			pr_err("B Interrupt received %d\n",
+			       topi >> TOPI_IID_SHIFT);
+			csr_clear(CSR_IP, 1 << (topi >> TOPI_IID_SHIFT));
+			if ((topi >> TOPI_IID_SHIFT) == 15)
+				send_to_vs = 15;
+			continue;
+		}
 		generic_handle_domain_irq(intc_domain,
 					  topi >> TOPI_IID_SHIFT);
+	}
 }
 
 /*
@@ -61,6 +73,9 @@ static void riscv_intc_irq_unmask(struct irq_data *d)
 		csr_set(CSR_IE, BIT(d->hwirq));
 	else
 		csr_set(CSR_IEH, BIT(d->hwirq - BITS_PER_LONG));
+
+	csr_set(CSR_IE, 1 << 14);
+	csr_set(CSR_IE, 1 << 15);
 }
 
 static void riscv_intc_irq_eoi(struct irq_data *d)

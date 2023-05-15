@@ -1090,6 +1090,8 @@ static void noinstr kvm_riscv_vcpu_enter_exit(struct kvm_vcpu *vcpu)
 	guest_state_exit_irqoff();
 }
 
+extern uint64_t send_to_vs;
+int count = 0;
 int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 {
 	int ret;
@@ -1196,6 +1198,16 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
 		kvm_riscv_local_tlb_sanitize(vcpu);
 
 		guest_timing_enter_irqoff();
+
+		if (send_to_vs != 0 && count >= 30000) {
+			/* Count is set to allow VM to boot and init AIA driver before
+			 * injecting the interrupt so that we can see the prints form
+			 * AIA driver to confirm injection was successful.
+			 */
+			csr_set(CSR_HVIP, 1 << send_to_vs);
+			count = 0;
+		}
+		count++;
 
 		kvm_riscv_vcpu_enter_exit(vcpu);
 
