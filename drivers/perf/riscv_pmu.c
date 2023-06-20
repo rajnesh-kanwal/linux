@@ -8,6 +8,8 @@
  * which are in turn based on sparc64 and x86 code.
  */
 
+#define DEBUG 1
+
 #include <linux/cpumask.h>
 #include <linux/irq.h>
 #include <linux/irqdesc.h>
@@ -92,6 +94,14 @@ u64 riscv_pmu_ctr_get_width_mask(struct perf_event *event)
 	}
 
 	return GENMASK_ULL(cwidth, 0);
+}
+
+static void riscv_pmu_sched_task(struct perf_event_pmu_context *pmu_ctx, bool sched_in)
+{
+	struct riscv_pmu *pmu = to_riscv_pmu(pmu_ctx->pmu);
+
+	if (pmu->sched_task)
+		pmu->sched_task(pmu_ctx, sched_in);
 }
 
 u64 riscv_pmu_event_update(struct perf_event *event)
@@ -204,7 +214,7 @@ static int riscv_pmu_add(struct perf_event *event, int flags)
 	idx = rvpmu->ctr_get_idx(event);
 	if (idx < 0)
 		return idx;
-
+	
 	hwc->idx = idx;
 	cpuc->events[idx] = event;
 	cpuc->n_events++;
@@ -248,6 +258,9 @@ static int riscv_pmu_event_init(struct perf_event *event)
 	int mapped_event;
 	u64 event_config = 0;
 	uint64_t cmask;
+
+    if (has_branch_stack(event) && !riscv_pmu_ctr_supported(rvpmu))
+ 		return -EOPNOTSUPP;
 
 	hwc->flags = 0;
 	mapped_event = rvpmu->event_map(event, &event_config);
@@ -302,10 +315,12 @@ struct riscv_pmu *riscv_pmu_alloc(void)
 	for_each_possible_cpu(cpuid) {
 		cpuc = per_cpu_ptr(pmu->hw_events, cpuid);
 		cpuc->n_events = 0;
+		cpuc->pmu = pmu;
 		for (i = 0; i < RISCV_MAX_COUNTERS; i++)
 			cpuc->events[i] = NULL;
 	}
 	pmu->pmu = (struct pmu) {
+		.sched_task	= riscv_pmu_sched_task,
 		.event_init	= riscv_pmu_event_init,
 		.add		= riscv_pmu_add,
 		.del		= riscv_pmu_del,

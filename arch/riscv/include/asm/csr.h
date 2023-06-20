@@ -259,6 +259,81 @@
 
 #define CSR_SSCOUNTOVF		0xda0
 
+/* Machine-Level Control transfer records CTR CSRs */
+#define CSR_MCTRCONTROL     0x360
+#define CSR_MCTRCONTROLH    0x370
+
+/* Supervisor-Level Control transfer records CTR CSRs */
+#define CSR_SCTRCONTROL     0x120
+#define CSR_SCTRCONTROLH    0x130
+
+/* xctrcontrol CSR bits. */
+#define CTRCONTROL_M_ENABLE        0x1
+#define CTRCONTROL_S_ENABLE        0x2
+#define CTRCONTROL_U_ENABLE        0x4
+#define CTRCONTROL_VS_ENABLE       0x8
+#define CTRCONTROL_VU_ENABLE       0x10
+#define CTRCONTROL_SEN             0x20
+#define CTRCONTROL_VSEN            0x40
+#define CTRCONTROL_CLR             0x80
+#define CTRCONTROL_MTE             0x100
+#define CTRCONTROL_STE             0x200
+#define CTRCONTROL_RASEMU          0x400
+#define CTRCONTROL_FROZEN          0x800
+#define CTRCONTROL_BPFRZ           0x1000
+#define CTRCONTROL_LCOFIFRZ        0x2000
+#define CTRCONTROL_DEPTH_MASK      0xF0000
+#define CTRCONTROL_EXCINH          0x200000000
+#define CTRCONTROL_INTRINH         0x400000000
+#define CTRCONTROL_TRETINH         0x800000000
+#define CTRCONTROL_BRINH           0x2000000000
+#define CTRCONTROL_ETEN            0x4000000000
+#define CTRCONTROL_INDCALL_INH     0x10000000000
+#define CTRCONTROL_DIRCALL_INH     0x20000000000
+#define CTRCONTROL_INDJUMP_INH     0x40000000000
+#define CTRCONTROL_DIRJUMP_INH     0x80000000000
+#define CTRCONTROL_CORSWAP_INH     0x100000000000
+#define CTRCONTROL_RET_INH         0x200000000000
+#define CTRCONTROL_INDOJUMP_INH    0x400000000000
+#define CTRCONTROL_DIROJUMP_INH    0x800000000000
+
+#ifdef CONFIG_RISCV_M_MODE
+#define CTRCONTROL_KERNEL_ENABLE        CTRCONTROL_M_ENABLE
+#else
+#define CTRCONTROL_KERNEL_ENABLE        CTRCONTROL_S_ENABLE
+#endif
+
+#define CTRCONTROL_DEPTH_MIN       0x0 /* 16 Entries. */
+#define CTRCONTROL_DEPTH_MAX       0xf /* 256 Entries. */
+
+#define CTR_ENTRIES_FIRST           0x200
+#define CTR_ENTRIES_LAST            0x2ff
+
+#define CTRSOURCE_VALID             0x1
+#define CTRTARGET_MISP              0x1
+
+#define CTRDATA_TYPE_MASK           0xF
+#define CTRDATA_CCV                 0x8000
+#define CTRDATA_CCM_MASK            0xFFF0000
+#define CTRDATA_CCE_MASK            0xF0000000
+
+#define CTRDATA_TYPE_NONE                   0
+#define CTRDATA_TYPE_EXCEPTION              1
+#define CTRDATA_TYPE_INTERRUPT              2
+#define CTRDATA_TYPE_TRAP_RET          		3
+#define CTRDATA_TYPE_UNDEFINED 		        4
+#define CTRDATA_TYPE_TAKEN_BRANCH           5
+#define CTRDATA_TYPE_EXTERNAL_TRAP          6
+#define CTRDATA_TYPE_RESERVED               7
+#define CTRDATA_TYPE_INDIRECT_CALL          8
+#define CTRDATA_TYPE_DIRECT_CALL            9
+#define CTRDATA_TYPE_INDIRECT_JUMP          10
+#define CTRDATA_TYPE_DIRECT_JUMP            11
+#define CTRDATA_TYPE_CO_ROUTINE_SWAP        12
+#define CTRDATA_TYPE_RETURN                 13
+#define CTRDATA_TYPE_OTHER_INDIRECT_JUMP    14
+#define CTRDATA_TYPE_OTHER_DIRECT_JUMP      15
+
 #define CSR_SSTATUS		0x100
 #define CSR_SIE			0x104
 #define CSR_STVEC		0x105
@@ -275,7 +350,9 @@
 
 /* Supervisor-Level Window to Indirectly Accessed Registers (AIA) */
 #define CSR_SISELECT		0x150
-#define CSR_SIREG		0x151
+#define CSR_SIREG		    0x151
+#define CSR_SIREG2		    0x152
+#define CSR_SIREG3		    0x153
 
 /* Supervisor-Level Interrupts (AIA) */
 #define CSR_STOPEI		0x15c
@@ -358,7 +435,9 @@
 
 /* Machine-Level Window to Indirectly Accessed Registers (AIA) */
 #define CSR_MISELECT		0x350
-#define CSR_MIREG		0x351
+#define CSR_MIREG		    0x351
+#define CSR_MIREG2		    0x352
+#define CSR_MIREG3		    0x353
 
 /* Machine-Level Interrupts (AIA) */
 #define CSR_MTOPEI		0x35c
@@ -388,9 +467,14 @@
 # define CSR_IEH		CSR_MIEH
 # define CSR_ISELECT	CSR_MISELECT
 # define CSR_IREG	CSR_MIREG
+# define CSR_IREG2	CSR_MIREG2
+# define CSR_IREG3	CSR_MIREG3
 # define CSR_IPH		CSR_MIPH
 # define CSR_TOPEI	CSR_MTOPEI
 # define CSR_TOPI	CSR_MTOPI
+
+# define CSR_CTRCONTROL     CSR_MCTRCONTROL
+# define CSR_CTRCONTROLH    CSR_MCTRCONTROLH
 
 # define SR_IE		SR_MIE
 # define SR_PIE		SR_MPIE
@@ -412,9 +496,14 @@
 # define CSR_IEH		CSR_SIEH
 # define CSR_ISELECT	CSR_SISELECT
 # define CSR_IREG	CSR_SIREG
+# define CSR_IREG2	CSR_SIREG2
+# define CSR_IREG3	CSR_SIREG3
 # define CSR_IPH		CSR_SIPH
 # define CSR_TOPEI	CSR_STOPEI
 # define CSR_TOPI	CSR_STOPI
+
+# define CSR_CTRCONTROL     CSR_SCTRCONTROL
+# define CSR_CTRCONTROLH    CSR_SCTRCONTROLH
 
 # define SR_IE		SR_SIE
 # define SR_PIE		SR_SPIE
