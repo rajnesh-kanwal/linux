@@ -97,12 +97,11 @@ static void pmu_legacy_init(struct riscv_pmu *pmu)
 
 static int pmu_legacy_device_probe(struct platform_device *pdev)
 {
-	struct riscv_pmu *pmu = NULL;
-
-	pmu = riscv_pmu_alloc();
-	if (!pmu)
+	riscv_pmu.hw_events = riscv_pmu_alloc_hw_events();
+	if (!riscv_pmu.hw_events)
 		return -ENOMEM;
-	pmu_legacy_init(pmu);
+
+	pmu_legacy_init(&riscv_pmu);
 
 	return 0;
 }

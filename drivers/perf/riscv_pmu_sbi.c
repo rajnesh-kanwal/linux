@@ -27,6 +27,31 @@
 PMU_FORMAT_ATTR(event, "config:0-47");
 PMU_FORMAT_ATTR(firmware, "config:63");
 
+static ssize_t branches_show(struct device *cdev, struct device_attribute *attr,
+			     char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", riscv_pmu.ctr_depth);
+}
+
+static umode_t ctr_is_visible(struct kobject *kobj, struct attribute *attr,
+			      int i)
+{
+	return riscv_pmu.ctr_depth ? attr->mode : 0;
+}
+
+static DEVICE_ATTR_RO(branches);
+
+static struct attribute *ctr_attrs[] = {
+	&dev_attr_branches.attr,
+	NULL
+};
+
+static struct attribute_group riscv_pmu_caps_ctr = {
+	.name = "caps",
+	.attrs = ctr_attrs,
+	.is_visible = ctr_is_visible,
+};
+
 static struct attribute *riscv_arch_formats_attr[] = {
 	&format_attr_event.attr,
 	&format_attr_firmware.attr,
@@ -40,6 +65,7 @@ static struct attribute_group riscv_pmu_format_group = {
 
 static const struct attribute_group *riscv_pmu_attr_groups[] = {
 	&riscv_pmu_format_group,
+	&riscv_pmu_caps_ctr,
 	NULL,
 };
 
@@ -448,6 +474,13 @@ static int pmu_sbi_event_map(struct perf_event *event, u64 *econfig)
 		break;
 	}
 
+	if (has_branch_stack(event)) {
+		if (!riscv_pmu_ctr_valid(event))
+			return -EOPNOTSUPP;
+
+		event->attach_state |= PERF_ATTACH_TASK_DATA;
+	}
+
 	return ret;
 }
 
@@ -490,6 +523,9 @@ static void pmu_sbi_ctr_start(struct perf_event *event, u64 ival)
 	if (ret.error && (ret.error != SBI_ERR_ALREADY_STARTED))
 		pr_err("Starting counter idx %d failed with error %d\n",
 			hwc->idx, sbi_err_map_linux_errno(ret.error));
+
+	if (has_branch_stack(event))
+		riscv_pmu_ctr_enable(event);
 }
 
 static void pmu_sbi_ctr_stop(struct perf_event *event, unsigned long flag)
@@ -497,11 +533,37 @@ static void pmu_sbi_ctr_stop(struct perf_event *event, unsigned long flag)
 	struct sbiret ret;
 	struct hw_perf_event *hwc = &event->hw;
 
+	if (has_branch_stack(event))
+		riscv_pmu_ctr_disable(event);
+
 	ret = sbi_ecall(SBI_EXT_PMU, SBI_EXT_PMU_COUNTER_STOP, hwc->idx, 1, flag, 0, 0, 0);
 	if (ret.error && (ret.error != SBI_ERR_ALREADY_STOPPED) &&
 		flag != SBI_PMU_STOP_FLAG_RESET)
 		pr_err("Stopping counter idx %d failed with error %d\n",
 			hwc->idx, sbi_err_map_linux_errno(ret.error));
+}
+
+static void pmu_sched_task(struct perf_event_pmu_context *pmu_ctx,
+			   bool sched_in)
+{
+	struct riscv_pmu *pmu = to_riscv_pmu(pmu_ctx->pmu);
+	void *task_ctx = pmu_ctx ? pmu_ctx->task_ctx_data : NULL;
+
+	if (riscv_pmu_ctr_supported(pmu)) {
+		/* Save branch records in task_ctx on sched out */
+		if (task_ctx) {
+			if (sched_in) {
+				riscv_pmu_ctr_restore(task_ctx);
+			} else {
+				riscv_pmu_ctr_save(pmu, task_ctx);
+				return;
+			}
+		}
+
+		/* Reset branch records on sched in */
+		if (sched_in)
+			riscv_pmu_ctr_reset();
+	}
 }
 
 static int pmu_sbi_find_num_ctrs(void)
@@ -679,17 +741,26 @@ static irqreturn_t pmu_sbi_ovf_handler(int irq, void *dev)
 		hw_evt = &event->hw;
 		riscv_pmu_event_update(event);
 		perf_sample_data_init(&data, 0, hw_evt->last_period);
-		if (riscv_pmu_event_set_period(event)) {
-			/*
-			 * Unlike other ISAs, RISC-V don't have to disable interrupts
-			 * to avoid throttling here. As per the specification, the
-			 * interrupt remains disabled until the OF bit is set.
-			 * Interrupts are enabled again only during the start.
-			 * TODO: We will need to stop the guest counters once
-			 * virtualization support is added.
-			 */
-			perf_event_overflow(event, &data, regs);
+		if (!riscv_pmu_event_set_period(event))
+			continue;
+
+		if (has_branch_stack(event) &&
+		    !WARN_ON(!cpu_hw_evt->branches)) {
+			riscv_pmu_ctr_read(cpu_hw_evt, event);
+			perf_sample_save_brstack(
+				&data, event,
+				&cpu_hw_evt->branches->branch_stack);
 		}
+
+		/*
+		 * Unlike other ISAs, RISC-V don't have to disable interrupts
+		 * to avoid throttling here. As per the specification, the
+		 * interrupt remains disabled until the OF bit is set.
+		 * Interrupts are enabled again only during the start.
+		 * TODO: We will need to stop the guest counters once
+		 * virtualization support is added.
+		 */
+		perf_event_overflow(event, &data, regs);
 	}
 
 	pmu_sbi_start_overflow_mask(pmu, overflowed_ctrs);
@@ -845,69 +916,109 @@ static inline int riscv_pm_pmu_register(struct riscv_pmu *pmu) { return 0; }
 static inline void riscv_pm_pmu_unregister(struct riscv_pmu *pmu) { }
 #endif
 
-static void riscv_pmu_destroy(struct riscv_pmu *pmu)
+static int branch_records_alloc(struct riscv_pmu *pmu)
 {
-	riscv_pm_pmu_unregister(pmu);
-	cpuhp_state_remove_instance(CPUHP_AP_PERF_RISCV_STARTING, &pmu->node);
+	struct branch_records __percpu *tmp_alloc_ptr;
+	struct branch_records *records;
+	struct cpu_hw_events *events;
+	int cpu;
+
+	if (!riscv_pmu_ctr_supported(pmu))
+		return 0;
+
+	tmp_alloc_ptr = alloc_percpu_gfp(struct branch_records, GFP_KERNEL);
+	if (!tmp_alloc_ptr)
+		return -ENOMEM;
+
+	/*
+	 * FIXME: Memory allocated via tmp_alloc_ptr gets completely consumed
+	 * here, never required to be freed up later. Hence losing access to on
+	 * stack 'tmp_alloc_ptr' is acceptible. Otherwise this alloc handle has
+	 * to be saved some where.
+	 */
+	for_each_possible_cpu(cpu) {
+		events = per_cpu_ptr(pmu->hw_events, cpu);
+		records = per_cpu_ptr(tmp_alloc_ptr, cpu);
+		events->branches = records;
+	}
+	return 0;
 }
 
 static int pmu_sbi_device_probe(struct platform_device *pdev)
 {
-	struct riscv_pmu *pmu = NULL;
 	int ret = -ENODEV;
 	int num_counters;
 
 	pr_info("SBI PMU extension is available\n");
-	pmu = riscv_pmu_alloc();
-	if (!pmu)
+
+	riscv_pmu.hw_events = riscv_pmu_alloc_hw_events();
+	if (!riscv_pmu.hw_events)
 		return -ENOMEM;
 
 	num_counters = pmu_sbi_find_num_ctrs();
 	if (num_counters < 0) {
 		pr_err("SBI PMU extension doesn't provide any counters\n");
-		goto out_free;
+		goto out_free_hw_events;
 	}
 
 	/* cache all the information about counters now */
 	if (pmu_sbi_get_ctrinfo(num_counters, &cmask))
-		goto out_free;
+		goto out_free_hw_events;
 
-	ret = pmu_sbi_setup_irqs(pmu, pdev);
+	ret = pmu_sbi_setup_irqs(&riscv_pmu, pdev);
 	if (ret < 0) {
 		pr_info("Perf sampling/filtering is not supported as sscof extension is not available\n");
-		pmu->pmu.capabilities |= PERF_PMU_CAP_NO_INTERRUPT;
-		pmu->pmu.capabilities |= PERF_PMU_CAP_NO_EXCLUDE;
+		riscv_pmu.pmu.capabilities |= PERF_PMU_CAP_NO_INTERRUPT;
+		riscv_pmu.pmu.capabilities |= PERF_PMU_CAP_NO_EXCLUDE;
 	}
 
-	pmu->pmu.attr_groups = riscv_pmu_attr_groups;
-	pmu->cmask = cmask;
-	pmu->ctr_start = pmu_sbi_ctr_start;
-	pmu->ctr_stop = pmu_sbi_ctr_stop;
-	pmu->event_map = pmu_sbi_event_map;
-	pmu->ctr_get_idx = pmu_sbi_ctr_get_idx;
-	pmu->ctr_get_width = pmu_sbi_ctr_get_width;
-	pmu->ctr_clear_idx = pmu_sbi_ctr_clear_idx;
-	pmu->ctr_read = pmu_sbi_ctr_read;
-
-	ret = cpuhp_state_add_instance(CPUHP_AP_PERF_RISCV_STARTING, &pmu->node);
+	ret = riscv_pmu_ctr_init(&riscv_pmu);
 	if (ret)
-		return ret;
+		goto out_free_hw_events;
 
-	ret = riscv_pm_pmu_register(pmu);
+	ret = branch_records_alloc(&riscv_pmu);
 	if (ret)
-		goto out_unregister;
+		goto out_ctr_finish;
 
-	ret = perf_pmu_register(&pmu->pmu, "cpu", PERF_TYPE_RAW);
+	riscv_pmu.pmu.attr_groups = riscv_pmu_attr_groups;
+	riscv_pmu.cmask = cmask;
+	riscv_pmu.ctr_start = pmu_sbi_ctr_start;
+	riscv_pmu.ctr_stop = pmu_sbi_ctr_stop;
+	riscv_pmu.event_map = pmu_sbi_event_map;
+	riscv_pmu.ctr_get_idx = pmu_sbi_ctr_get_idx;
+	riscv_pmu.ctr_get_width = pmu_sbi_ctr_get_width;
+	riscv_pmu.ctr_clear_idx = pmu_sbi_ctr_clear_idx;
+	riscv_pmu.ctr_read = pmu_sbi_ctr_read;
+	riscv_pmu.sched_task = pmu_sched_task;
+
+	ret = cpuhp_state_add_instance(CPUHP_AP_PERF_RISCV_STARTING,
+				       &riscv_pmu.node);
+	if (ret)
+		goto out_ctr_finish;
+
+	ret = riscv_pm_pmu_register(&riscv_pmu);
+	if (ret)
+		goto out_cpuhp_remove_instance;
+
+	ret = perf_pmu_register(&riscv_pmu.pmu, "cpu", PERF_TYPE_RAW);
 	if (ret)
 		goto out_unregister;
 
 	return 0;
 
 out_unregister:
-	riscv_pmu_destroy(pmu);
+	riscv_pm_pmu_unregister(&riscv_pmu);
 
-out_free:
-	kfree(pmu);
+out_cpuhp_remove_instance:
+	cpuhp_state_remove_instance(CPUHP_AP_PERF_RISCV_STARTING,
+				    &riscv_pmu.node);
+
+out_ctr_finish:
+	riscv_pmu_ctr_finish(&riscv_pmu);
+
+out_free_hw_events:
+	riscv_pmu_free_hw_events(riscv_pmu.hw_events);
+
 	return ret;
 }
 

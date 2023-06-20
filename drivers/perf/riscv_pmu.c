@@ -8,6 +8,8 @@
  * which are in turn based on sparc64 and x86 code.
  */
 
+#define DEBUG 1
+
 #include <linux/cpumask.h>
 #include <linux/irq.h>
 #include <linux/irqdesc.h>
@@ -92,6 +94,15 @@ u64 riscv_pmu_ctr_get_width_mask(struct perf_event *event)
 	}
 
 	return GENMASK_ULL(cwidth, 0);
+}
+
+static void riscv_pmu_sched_task(struct perf_event_pmu_context *pmu_ctx,
+				 bool sched_in)
+{
+	struct riscv_pmu *pmu = to_riscv_pmu(pmu_ctx->pmu);
+
+	if (pmu->sched_task)
+		pmu->sched_task(pmu_ctx, sched_in);
 }
 
 u64 riscv_pmu_event_update(struct perf_event *event)
@@ -249,6 +260,9 @@ static int riscv_pmu_event_init(struct perf_event *event)
 	u64 event_config = 0;
 	uint64_t cmask;
 
+	if (has_branch_stack(event) && !riscv_pmu_ctr_supported(rvpmu))
+		return -EOPNOTSUPP;
+
 	hwc->flags = 0;
 	mapped_event = rvpmu->event_map(event, &event_config);
 	if (mapped_event < 0) {
@@ -283,41 +297,42 @@ static int riscv_pmu_event_init(struct perf_event *event)
 	return 0;
 }
 
-struct riscv_pmu *riscv_pmu_alloc(void)
-{
-	struct riscv_pmu *pmu;
-	int cpuid, i;
-	struct cpu_hw_events *cpuc;
-
-	pmu = kzalloc(sizeof(*pmu), GFP_KERNEL);
-	if (!pmu)
-		goto out;
-
-	pmu->hw_events = alloc_percpu_gfp(struct cpu_hw_events, GFP_KERNEL);
-	if (!pmu->hw_events) {
-		pr_info("failed to allocate per-cpu PMU data.\n");
-		goto out_free_pmu;
-	}
-
-	for_each_possible_cpu(cpuid) {
-		cpuc = per_cpu_ptr(pmu->hw_events, cpuid);
-		cpuc->n_events = 0;
-		for (i = 0; i < RISCV_MAX_COUNTERS; i++)
-			cpuc->events[i] = NULL;
-	}
-	pmu->pmu = (struct pmu) {
+struct riscv_pmu riscv_pmu __read_mostly = {
+	.pmu = {
+		.sched_task	= riscv_pmu_sched_task,
 		.event_init	= riscv_pmu_event_init,
 		.add		= riscv_pmu_add,
 		.del		= riscv_pmu_del,
 		.start		= riscv_pmu_start,
 		.stop		= riscv_pmu_stop,
 		.read		= riscv_pmu_read,
-	};
+	},
+};
 
-	return pmu;
+struct cpu_hw_events __percpu *riscv_pmu_alloc_hw_events(void)
+{
+	struct cpu_hw_events __percpu *hw_events;
+	struct cpu_hw_events *cpuc;
+	int cpuid, i;
 
-out_free_pmu:
-	kfree(pmu);
-out:
-	return NULL;
+	hw_events = alloc_percpu_gfp(struct cpu_hw_events, GFP_KERNEL);
+	if (!hw_events) {
+		pr_info("failed to allocate per-cpu PMU data.\n");
+		return NULL;
+	}
+
+	for_each_possible_cpu(cpuid) {
+		cpuc = per_cpu_ptr(hw_events, cpuid);
+		cpuc->n_events = 0;
+		cpuc->pmu = &riscv_pmu;
+		for (i = 0; i < RISCV_MAX_COUNTERS; i++)
+			cpuc->events[i] = NULL;
+	}
+
+	return hw_events;
+}
+
+void riscv_pmu_free_hw_events(struct cpu_hw_events __percpu *hw_events)
+{
+	free_percpu(hw_events);
 }
