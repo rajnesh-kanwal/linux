@@ -61,6 +61,8 @@ struct riscv_pmu {
 	struct notifier_block   riscv_pm_nb;
 };
 
+extern struct riscv_pmu riscv_pmu __read_mostly;
+
 #define to_riscv_pmu(p) (container_of(p, struct riscv_pmu, pmu))
 
 void riscv_pmu_start(struct perf_event *event, int flags);

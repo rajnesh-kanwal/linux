@@ -840,19 +840,19 @@ static void riscv_pmu_destroy(struct riscv_pmu *pmu)
 
 static int pmu_sbi_device_probe(struct platform_device *pdev)
 {
-	struct riscv_pmu *pmu = NULL;
 	int ret = -ENODEV;
 	int num_counters;
 
 	pr_info("SBI PMU extension is available\n");
-	pmu = riscv_pmu_alloc();
-	if (!pmu)
+
+	riscv_pmu.hw_events = riscv_pmu_alloc_hw_events();
+	if (!riscv_pmu.hw_events)
 		return -ENOMEM;
 
 	num_counters = pmu_sbi_find_num_ctrs();
 	if (num_counters < 0) {
 		pr_err("SBI PMU extension doesn't provide any counters\n");
-		goto out_free;
+		goto out_free_hw_events;
 	}
 
 	/* It is possible to get from SBI more than max number of counters */
@@ -863,13 +863,13 @@ static int pmu_sbi_device_probe(struct platform_device *pdev)
 
 	/* cache all the information about counters now */
 	if (pmu_sbi_get_ctrinfo(num_counters, &cmask))
-		goto out_free;
+		goto out_free_hw_events;
 
-	ret = pmu_sbi_setup_irqs(pmu, pdev);
+	ret = pmu_sbi_setup_irqs(&riscv_pmu, pdev);
 	if (ret < 0) {
 		pr_info("Perf sampling/filtering is not supported as sscof extension is not available\n");
-		pmu->pmu.capabilities |= PERF_PMU_CAP_NO_INTERRUPT;
-		pmu->pmu.capabilities |= PERF_PMU_CAP_NO_EXCLUDE;
+		riscv_pmu.pmu.capabilities |= PERF_PMU_CAP_NO_INTERRUPT;
+		riscv_pmu.pmu.capabilities |= PERF_PMU_CAP_NO_EXCLUDE;
 	}
 
 	pmu->pmu.attr_groups = riscv_pmu_attr_groups;
@@ -884,23 +884,28 @@ static int pmu_sbi_device_probe(struct platform_device *pdev)
 
 	ret = cpuhp_state_add_instance(CPUHP_AP_PERF_RISCV_STARTING, &pmu->node);
 	if (ret)
-		return ret;
+		goto out_free_hw_events;
 
 	ret = riscv_pm_pmu_register(pmu);
 	if (ret)
-		goto out_unregister;
+		goto out_cpuhp_remove_instance;
 
-	ret = perf_pmu_register(&pmu->pmu, "cpu", PERF_TYPE_RAW);
+	ret = perf_pmu_register(&riscv_pmu.pmu, "cpu", PERF_TYPE_RAW);
 	if (ret)
 		goto out_unregister;
 
 	return 0;
 
 out_unregister:
-	riscv_pmu_destroy(pmu);
+	riscv_pm_pmu_unregister(&riscv_pmu);
 
-out_free:
-	kfree(pmu);
+out_cpuhp_remove_instance:
+	cpuhp_state_remove_instance(CPUHP_AP_PERF_RISCV_STARTING,
+				    &riscv_pmu.node);
+
+out_free_hw_events:
+	riscv_pmu_free_hw_events(riscv_pmu.hw_events);
+
 	return ret;
 }
 
