@@ -289,6 +289,13 @@
 #define CSR_SISELECT		0x150
 #define CSR_SIREG		0x151
 
+/* Supervisor Indirect Register Alias */
+#define CSR_SIREG2		0x152
+#define CSR_SIREG3		0x153
+#define CSR_SIREG4		0x155
+#define CSR_SIREG5		0x156
+#define CSR_SIREG6		0x157
+
 /* Supervisor-Level Interrupts (AIA) */
 #define CSR_STOPEI		0x15c
 #define CSR_STOPI		0xdb0
@@ -372,6 +379,13 @@
 #define CSR_MISELECT		0x350
 #define CSR_MIREG		0x351
 
+/* Machine Indirect Register Alias */
+#define CSR_MIREG2		0x352
+#define CSR_MIREG3		0x353
+#define CSR_MIREG4		0x355
+#define CSR_MIREG5		0x356
+#define CSR_MIREG6		0x357
+
 /* Machine-Level Interrupts (AIA) */
 #define CSR_MTOPEI		0x35c
 #define CSR_MTOPI		0xfb0
@@ -403,10 +417,15 @@
 # define CSR_TVAL	CSR_MTVAL
 # define CSR_IP		CSR_MIP
 
-# define CSR_IEH		CSR_MIEH
+# define CSR_IEH	CSR_MIEH
 # define CSR_ISELECT	CSR_MISELECT
 # define CSR_IREG	CSR_MIREG
-# define CSR_IPH		CSR_MIPH
+# define CSR_IREG2	CSR_MIREG2
+# define CSR_IREG3	CSR_MIREG3
+# define CSR_IREG4	CSR_MIREG4
+# define CSR_IREG5	CSR_MIREG5
+# define CSR_IREG6	CSR_MIREG6
+# define CSR_IPH	CSR_MIPH
 # define CSR_TOPEI	CSR_MTOPEI
 # define CSR_TOPI	CSR_MTOPI
 
@@ -414,9 +433,9 @@
 # define SR_PIE		SR_MPIE
 # define SR_PP		SR_MPP
 
-# define RV_IRQ_SOFT		IRQ_M_SOFT
+# define RV_IRQ_SOFT	IRQ_M_SOFT
 # define RV_IRQ_TIMER	IRQ_M_TIMER
-# define RV_IRQ_EXT		IRQ_M_EXT
+# define RV_IRQ_EXT	IRQ_M_EXT
 #else /* CONFIG_RISCV_M_MODE */
 # define CSR_STATUS	CSR_SSTATUS
 # define CSR_IE		CSR_SIE
@@ -427,20 +446,29 @@
 # define CSR_TVAL	CSR_STVAL
 # define CSR_IP		CSR_SIP
 
-# define CSR_IEH		CSR_SIEH
+# define CSR_IEH	CSR_SIEH
 # define CSR_ISELECT	CSR_SISELECT
 # define CSR_IREG	CSR_SIREG
-# define CSR_IPH		CSR_SIPH
+# define CSR_IREG2	CSR_SIREG2
+# define CSR_IREG3	CSR_SIREG3
+# define CSR_IREG4	CSR_SIREG4
+# define CSR_IREG5	CSR_SIREG5
+# define CSR_IREG6	CSR_SIREG6
+# define CSR_IPH	CSR_SIPH
 # define CSR_TOPEI	CSR_STOPEI
 # define CSR_TOPI	CSR_STOPI
+
+# define CSR_CTRCONTROL     CSR_SCTRCONTROL
+# define CSR_CTRCONTROLH    CSR_SCTRCONTROLH
+# define CSR_CTRSTATUS      CSR_SCTRSTATUS
 
 # define SR_IE		SR_SIE
 # define SR_PIE		SR_SPIE
 # define SR_PP		SR_SPP
 
-# define RV_IRQ_SOFT		IRQ_S_SOFT
+# define RV_IRQ_SOFT	IRQ_S_SOFT
 # define RV_IRQ_TIMER	IRQ_S_TIMER
-# define RV_IRQ_EXT		IRQ_S_EXT
+# define RV_IRQ_EXT	IRQ_S_EXT
 # define RV_IRQ_PMU	IRQ_PMU_OVF
 # define SIP_LCOFIP     (_AC(0x1, UL) << IRQ_PMU_OVF)
 
