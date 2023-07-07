@@ -27,6 +27,31 @@
 PMU_FORMAT_ATTR(event, "config:0-47");
 PMU_FORMAT_ATTR(firmware, "config:63");
 
+static ssize_t branches_show(struct device *cdev, struct device_attribute *attr,
+			     char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%d\n", riscv_pmu.ctr_depth);
+}
+
+static umode_t ctr_is_visible(struct kobject *kobj, struct attribute *attr,
+			      int i)
+{
+	return riscv_pmu.ctr_depth ? attr->mode : 0;
+}
+
+static DEVICE_ATTR_RO(branches);
+
+static struct attribute *ctr_attrs[] = {
+	&dev_attr_branches.attr,
+	NULL
+};
+
+static struct attribute_group riscv_pmu_caps_ctr = {
+	.name = "caps",
+	.attrs = ctr_attrs,
+	.is_visible = ctr_is_visible,
+};
+
 static struct attribute *riscv_arch_formats_attr[] = {
 	&format_attr_event.attr,
 	&format_attr_firmware.attr,
@@ -40,6 +65,7 @@ static struct attribute_group riscv_pmu_format_group = {
 
 static const struct attribute_group *riscv_pmu_attr_groups[] = {
 	&riscv_pmu_format_group,
+	&riscv_pmu_caps_ctr,
 	NULL,
 };
 
