@@ -28,6 +28,13 @@
 
 #define RISCV_PMU_CONFIG1_GUEST_EVENTS 0x1
 
+#define MAX_BRANCH_RECORDS 256
+
+struct branch_records {
+	struct perf_branch_stack branch_stack;
+	struct perf_branch_entry branch_entries[MAX_BRANCH_RECORDS];
+};
+
 struct cpu_hw_events {
 	/* currently enabled events */
 	int			n_events;
@@ -39,6 +46,11 @@ struct cpu_hw_events {
 	DECLARE_BITMAP(used_hw_ctrs, RISCV_MAX_COUNTERS);
 	/* currently enabled firmware counters */
 	DECLARE_BITMAP(used_fw_ctrs, RISCV_MAX_COUNTERS);
+
+	struct branch_records *branches;
+
+	/* Pointer to parent PMU structure. */
+	struct riscv_pmu *pmu;
 };
 
 struct riscv_pmu {
@@ -55,10 +67,14 @@ struct riscv_pmu {
 	void		(*ctr_start)(struct perf_event *event, u64 init_val);
 	void		(*ctr_stop)(struct perf_event *event, unsigned long flag);
 	int		(*event_map)(struct perf_event *event, u64 *config);
+	void	(*sched_task)(struct perf_event_pmu_context *pmu_ctx,
+			   bool sched_in);
 
 	struct cpu_hw_events	__percpu *hw_events;
 	struct hlist_node	node;
 	struct notifier_block   riscv_pm_nb;
+
+	unsigned int ctr_depth;
 };
 
 extern struct riscv_pmu riscv_pmu __read_mostly;
@@ -76,11 +92,57 @@ void riscv_pmu_legacy_skip_init(void);
 #else
 static inline void riscv_pmu_legacy_skip_init(void) {};
 #endif
-struct riscv_pmu *riscv_pmu_alloc(void);
+struct cpu_hw_events __percpu *riscv_pmu_alloc_hw_events(void);
+void riscv_pmu_free_hw_events(struct cpu_hw_events __percpu *hw_events);
 #ifdef CONFIG_RISCV_PMU_SBI
 int riscv_pmu_get_hpm_info(u32 *hw_ctr_width, u32 *num_hw_ctr);
 #endif
 
+static inline bool riscv_pmu_ctr_supported(struct riscv_pmu *pmu)
+{
+	return !!pmu->ctr_depth;
+}
+
 #endif /* CONFIG_RISCV_PMU */
+
+#ifdef CONFIG_RISCV_CTR
+void riscv_pmu_ctr_read(struct cpu_hw_events *cpuc, struct perf_event *event);
+bool riscv_pmu_ctr_valid(struct perf_event *event);
+void riscv_pmu_ctr_enable(struct perf_event *event);
+void riscv_pmu_ctr_disable(struct perf_event *event);
+void riscv_pmu_ctr_finish(struct riscv_pmu *riscv_pmu);
+int riscv_pmu_ctr_init(struct riscv_pmu *riscv_pmu);
+void riscv_pmu_ctr_reset(void);
+void riscv_pmu_ctr_save(struct riscv_pmu *riscv_pmu, void *ctx);
+void riscv_pmu_ctr_restore(void *ctx);
+#else
+static inline void riscv_pmu_ctr_read(struct cpu_hw_events *cpuc,
+				      struct perf_event *event)
+{
+	WARN_ON_ONCE(!has_branch_stack(event));
+}
+
+static inline bool riscv_pmu_ctr_valid(struct perf_event *event)
+{
+	WARN_ON_ONCE(!has_branch_stack(event));
+	return false;
+}
+
+static inline void riscv_pmu_ctr_enable(struct perf_event *event)
+{
+	WARN_ON_ONCE(!has_branch_stack(event));
+}
+
+static inline void riscv_pmu_ctr_disable(struct perf_event *event)
+{
+	WARN_ON_ONCE(!has_branch_stack(event));
+}
+
+static inline void riscv_pmu_ctr_finish(struct riscv_pmu *riscv_pmu) { return 0; }
+static inline int riscv_pmu_ctr_init(struct riscv_pmu *riscv_pmu) { }
+static inline void riscv_pmu_ctr_reset(void) { }
+static inline void riscv_pmu_ctr_save(struct riscv_pmu *riscv_pmu, void *ctx) { }
+static inline void riscv_pmu_ctr_restore(void *ctx) { }
+#endif
 
 #endif /* _ASM_RISCV_PERF_EVENT_H */

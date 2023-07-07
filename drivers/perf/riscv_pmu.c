@@ -94,6 +94,15 @@ u64 riscv_pmu_ctr_get_width_mask(struct perf_event *event)
 	return GENMASK_ULL(cwidth, 0);
 }
 
+static void riscv_pmu_sched_task(struct perf_event_pmu_context *pmu_ctx,
+				 bool sched_in)
+{
+	struct riscv_pmu *pmu = to_riscv_pmu(pmu_ctx->pmu);
+
+	if (pmu->sched_task)
+		pmu->sched_task(pmu_ctx, sched_in);
+}
+
 u64 riscv_pmu_event_update(struct perf_event *event)
 {
 	struct riscv_pmu *rvpmu = to_riscv_pmu(event->pmu);
@@ -245,6 +254,9 @@ static int riscv_pmu_event_init(struct perf_event *event)
 	int mapped_event;
 	u64 event_config = 0;
 	uint64_t cmask;
+
+	if (has_branch_stack(event) && !riscv_pmu_ctr_supported(rvpmu))
+		return -EOPNOTSUPP;
 
 	hwc->flags = 0;
 	mapped_event = rvpmu->event_map(event, &event_config);
