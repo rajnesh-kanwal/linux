@@ -16,7 +16,7 @@ static unsigned int get_nr_valid_ctr_entries(unsigned int depth)
 	if (status & CTRSTATUS_WRAP)
 		return depth;
 
-	return FIELD_GET(CTRSTATUS_TOS_MASK, status);
+	return FIELD_GET(CTRSTATUS_WRPTR_MASK, status);
 }
 
 /* Reads ctr CSRs at index = idx and stores it in entry struct. */
@@ -30,6 +30,8 @@ static bool capture_ctr_regset(struct ctr_regset *entry, unsigned int idx)
 	entry->src = entry->src & (~CTRSOURCE_VALID);
 	entry->target = get_ctr_tgt_reg(idx);
 	entry->ctr_data = get_ctr_data_reg(idx);
+
+    pr_err("%lx %lx %lx", entry->src, entry->target, entry->ctr_data);
 
 	return true;
 }
@@ -199,7 +201,7 @@ static void check_available_filters(void)
 	if (ctr_ctl & CTRCONTROL_INDCALL_INH)
 		allowed_filters |= PERF_SAMPLE_BRANCH_IND_CALL;
 
-	if (ctr_ctl & CTRCONTROL_BRINH)
+	if (ctr_ctl & CTRCONTROL_TKBRINH)
 		allowed_filters |= PERF_SAMPLE_BRANCH_COND;
 
 	if (ctr_ctl & CTRCONTROL_RASEMU)
@@ -272,7 +274,7 @@ static u64 branch_type_to_ctr(int branch_type)
 		config &= ~CTRCONTROL_INDCALL_INH;
 
 	if (branch_type & PERF_SAMPLE_BRANCH_COND)
-		config &= ~CTRCONTROL_BRINH;
+		config &= ~CTRCONTROL_TKBRINH;
 
 	if (branch_type & PERF_SAMPLE_BRANCH_CALL_STACK) {
 		config &= ~(CTRCONTROL_INDCALL_INH | CTRCONTROL_DIRCALL_INH |
@@ -322,7 +324,7 @@ static const int ctr_perf_map[] = {
 	[CTRDATA_TYPE_EXCEPTION]		= PERF_BR_SYSCALL,
 	[CTRDATA_TYPE_INTERRUPT]		= PERF_BR_IRQ,
 	[CTRDATA_TYPE_TRAP_RET]			= PERF_BR_ERET,
-	[CTRDATA_TYPE_UNDEFINED]		= PERF_BR_UNKNOWN,
+	[CTRDATA_TYPE_NONTAKEN_BRANCH]  	= PERF_BR_COND,
 	[CTRDATA_TYPE_TAKEN_BRANCH]		= PERF_BR_COND,
 	[CTRDATA_TYPE_EXTERNAL_TRAP]		= PERF_BR_UNKNOWN,
 	[CTRDATA_TYPE_RESERVED]			= PERF_BR_UNKNOWN,

@@ -272,14 +272,14 @@
 #define CSR_SSCOUNTOVF		0xda0
 
 /* Machine-Level Control transfer records CTR CSRs */
-#define CSR_MCTRCONTROL		0x360
-#define CSR_MCTRCONTROLH		0x370
-#define CSR_MCTRSTATUS      0x361
+#define CSR_MCTRCONTROL			0x381
+#define CSR_MCTRCONTROLH		0x382
+#define CSR_MCTRSTATUS      		0x383
 
 /* Supervisor-Level Control transfer records CTR CSRs */
-#define CSR_SCTRCONTROL		0x120
-#define CSR_SCTRCONTROLH		0x130
-#define CSR_SCTRSTATUS      0x121
+#define CSR_SCTRCONTROL			0x181
+#define CSR_SCTRCONTROLH		0x182
+#define CSR_SCTRSTATUS      		0x183
 
 /* xctrcontrol CSR bits. */
 #define CTRCONTROL_M_ENABLE            _AC(0x1, UL)
@@ -295,7 +295,8 @@
 #define CTRCONTROL_EXCINH              _AC(0x200000000, UL)
 #define CTRCONTROL_INTRINH             _AC(0x400000000, UL)
 #define CTRCONTROL_TRETINH             _AC(0x800000000, UL)
-#define CTRCONTROL_BRINH               _AC(0x2000000000, UL)
+#define CTRCONTROL_NTBREN              _AC(0x1000000000, UL)
+#define CTRCONTROL_TKBRINH             _AC(0x2000000000, UL)
 #define CTRCONTROL_ETEN                _AC(0x4000000000, UL)
 #define CTRCONTROL_INDCALL_INH         _AC(0x10000000000, UL)
 #define CTRCONTROL_DIRCALL_INH         _AC(0x20000000000, UL)
@@ -307,9 +308,9 @@
 #define CTRCONTROL_DIROJUMP_INH        _AC(0x800000000000, UL)
 
 /* sctrstatus CSR bits. */
-#define CTRSTATUS_TOS_MASK         0xFF
-#define CTRSTATUS_WRAP             0x4000
-#define CTRSTATUS_FROZEN           0x8000
+#define CTRSTATUS_WRPTR_MASK       	0xFF
+#define CTRSTATUS_WRAP             	0x4000
+#define CTRSTATUS_FROZEN           	0x8000
 
 #ifdef CONFIG_RISCV_M_MODE
 #define CTRCONTROL_KERNEL_ENABLE	CTRCONTROL_M_ENABLE
@@ -327,7 +328,7 @@
 #define CTRTARGET_MISP			0x1
 
 #define CTRDATA_TYPE_MASK		0xF
-#define CTRDATA_CCV			    0x8000
+#define CTRDATA_CCV			0x8000
 #define CTRDATA_CCM_MASK		0xFFF0000
 #define CTRDATA_CCE_MASK		0xF0000000
 
@@ -335,7 +336,7 @@
 #define CTRDATA_TYPE_EXCEPTION			1
 #define CTRDATA_TYPE_INTERRUPT			2
 #define CTRDATA_TYPE_TRAP_RET			3
-#define CTRDATA_TYPE_UNDEFINED			4
+#define CTRDATA_TYPE_NONTAKEN_BRANCH		4
 #define CTRDATA_TYPE_TAKEN_BRANCH		5
 #define CTRDATA_TYPE_EXTERNAL_TRAP		6
 #define CTRDATA_TYPE_RESERVED			7
