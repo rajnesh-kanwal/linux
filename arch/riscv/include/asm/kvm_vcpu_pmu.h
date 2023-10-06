@@ -12,7 +12,7 @@
 #include <linux/perf/riscv_pmu.h>
 #include <asm/sbi.h>
 
-#ifdef CONFIG_RISCV_PMU_SBI
+#ifdef CONFIG_RISCV_PMU
 #define RISCV_KVM_MAX_FW_CTRS	32
 #define RISCV_KVM_MAX_HW_CTRS	32
 #define RISCV_KVM_MAX_COUNTERS	(RISCV_KVM_MAX_HW_CTRS + RISCV_KVM_MAX_FW_CTRS)
@@ -115,5 +115,5 @@ static inline int kvm_riscv_vcpu_pmu_incr_fw(struct kvm_vcpu *vcpu, unsigned lon
 
 static inline void kvm_riscv_vcpu_pmu_deinit(struct kvm_vcpu *vcpu) {}
 static inline void kvm_riscv_vcpu_pmu_reset(struct kvm_vcpu *vcpu) {}
-#endif /* CONFIG_RISCV_PMU_SBI */
+#endif /* CONFIG_RISCV_PMU */
 #endif /* !__KVM_VCPU_RISCV_PMU_H */
