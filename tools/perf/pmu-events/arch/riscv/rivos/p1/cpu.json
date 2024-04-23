@@ -1,0 +1,14 @@
+[
+  {
+    "ArchStdEvent": "instructions",
+    "EventCode": "0x8b0001",
+    "Counter":"4"
+  },
+
+  {
+    "ArchStdEvent": "cycles",
+    "EventCode": "0x10001",
+    "Counter":"3"
+  }
+]
+
