@@ -1,0 +1,46 @@
+riscv: pmu: Add support for Control Transfer Records Ext.
+
+This series enables Control Transfer Records extension support on riscv
+platform. This extension is similar to Arch LBR in x86 and BRBE in ARM.
+The Extension is in stable state but not yet frozen and the latest release
+can be found here [0]
+
+CTR extension depends on couple of other extensions:
+
+1. S[m|s]csrind : The indirect CSR extension [1] which defines additional
+   ([M|S|VS]IREG2-[M|S|VS]IREG6) register to address size limitation of
+   RISC-V CSR address space. CTR access ctrsource, ctrtartget and ctrdata
+   CSRs using sscsrind extension.
+
+2. Smstateen: The mstateen bit[54] controls the access to the CTR ext to
+   S-mode.
+
+3. Sscofpmf: Counter overflow and privilege mode filtering. [2]
+
+The series is based on Smcdeleg/Ssccfg counter delegation extension [3]
+patches [4]. CTR itself doesn't depend on counter delegation support. This
+rebase is basically to include the Smcsrind patches.
+
+The last patch is in the perf tool to allow processing 256 entries. Without
+this perf seems to consider that sample as corrupted and discards it.
+
+Here is the link to a quick guide [5] to setup and run a basic perf demo on
+Linux to use CTR Ext.
+
+The Qemu patches can be found here:
+https://github.com/rajnesh-kanwal/qemu/tree/ctr_upstream
+
+The opensbi patch can be found here:
+https://github.com/rajnesh-kanwal/opensbi/tree/ctr_upstream
+
+The Linux kernel patches can be found here:
+https://github.com/rajnesh-kanwal/linux/tree/ctr_upstream
+
+[0]: https://github.com/riscv/riscv-control-transfer-records/release
+[1]: https://github.com/riscv/riscv-indirect-csr-access
+[2]: https://github.com/riscvarchive/riscv-count-overflow/tree/main
+[3]: https://github.com/riscv/riscv-smcdeleg-ssccfg
+[4]: https://lore.kernel.org/lkml/20240217005738.3744121-1-atishp@rivosinc.com/
+[5]: https://github.com/rajnesh-kanwal/linux/wiki/Running-CTR-basic-demo-on-QEMU-RISC%E2%80%90V-Virt-machine
+
+git send-email   -6 --annotate  --subject-prefix="PATCH RFC" --cover-letter --to linux-kernel@vger.kernel.org --cc linux-perf-users@vger.kernel.org,linux-riscv@lists.infradead.org,adrian.hunter@intel.com,alexander.shishkin@linux.intel.com,ajones@ventanamicro.com,anup@brainfault.org,acme@kernel.org,atishp@rivosinc.com,beeman@rivosinc.combrauner@kernel.org,cleger@rivosinc.com,conor@kernel.org,evan@rivosinc.com,heiko@sntech.de,irogers@google.com,mingo@redhat.com,james.clark@arm.com,renyu.zj@linux.alibaba.com,jolsa@kernel.org,jisheng.teoh@starfivetech.com,john.g.garry@oracle.com,corbet@lwn.net,kan.liang@linux.intel.com,krzysztof.kozlowski+dt@linaro.org,leyfoon.tan@starfivetech.com,mark.rutland@arm.com,namhyung@kernel.org,palmer@dabbelt.com,paul.walmsley@sifive.com,peterz@infradead.org,robh+dt@kernel.org,samuel.holland@sifive.com,tech-control-transfer-records@lists.riscv.org,weilin.wang@intel.com,will@kernel.org,kaiwenxue1@gmail.com,yangjihong1@huawei.com
