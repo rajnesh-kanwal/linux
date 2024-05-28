@@ -675,7 +675,7 @@ static void pmu_sched_task(struct perf_event_pmu_context *pmu_ctx,
 {
 	struct riscv_pmu *pmu = to_riscv_pmu(pmu_ctx->pmu);
 
-	/* Call CTR specific Sched hook. */
+	riscv_pmu_ctr_sched_task(pmu_ctx, sched_in);
 }
 
 static int rvpmu_sbi_find_num_ctrs(void)
@@ -935,17 +935,25 @@ static irqreturn_t rvpmu_ovf_handler(int irq, void *dev)
 		hw_evt = &event->hw;
 		riscv_pmu_event_update(event);
 		perf_sample_data_init(&data, 0, hw_evt->last_period);
-		if (riscv_pmu_event_set_period(event)) {
-			/*
-			 * Unlike other ISAs, RISC-V don't have to disable interrupts
-			 * to avoid throttling here. As per the specification, the
-			 * interrupt remains disabled until the OF bit is set.
-			 * Interrupts are enabled again only during the start.
-			 * TODO: We will need to stop the guest counters once
-			 * virtualization support is added.
-			 */
-			perf_event_overflow(event, &data, regs);
+		if (!riscv_pmu_event_set_period(event))
+			continue;
+
+		if (needs_branch_stack(event)) {
+			riscv_pmu_ctr_consume(cpu_hw_evt, event);
+			perf_sample_save_brstack(
+				&data, event,
+				&cpu_hw_evt->branches->branch_stack, NULL);
 		}
+
+		/*
+		 * Unlike other ISAs, RISC-V don't have to disable interrupts
+		 * to avoid throttling here. As per the specification, the
+		 * interrupt remains disabled until the OF bit is set.
+		 * Interrupts are enabled again only during the start.
+		 * TODO: We will need to stop the guest counters once
+		 * virtualization support is added.
+		 */
+		perf_event_overflow(event, &data, regs);
 	}
 
 	rvpmu_start_overflow_mask(pmu, overflowed_ctrs);
@@ -1103,10 +1111,12 @@ static void rvpmu_ctr_start(struct perf_event *event, u64 ival)
 	else
 		rvpmu_sbi_ctr_start(event, ival);
 
-
 	if ((hwc->flags & PERF_EVENT_FLAG_USER_ACCESS) &&
 	    (hwc->flags & PERF_EVENT_FLAG_USER_READ_CNT))
 		rvpmu_set_scounteren((void *)event);
+
+	if (needs_branch_stack(event))
+		riscv_pmu_ctr_enable(event);
 }
 
 static void rvpmu_ctr_stop(struct perf_event *event, unsigned long flag)
@@ -1128,6 +1138,9 @@ static void rvpmu_ctr_stop(struct perf_event *event, unsigned long flag)
 	} else {
 		rvpmu_sbi_ctr_stop(event, flag);
 	}
+
+	if (needs_branch_stack(event))
+		riscv_pmu_ctr_disable(event);
 }
 
 static int rvpmu_find_ctrs(void)
@@ -1161,6 +1174,9 @@ static int rvpmu_find_ctrs(void)
 
 static int rvpmu_event_map(struct perf_event *event, u64 *econfig)
 {
+	if (needs_branch_stack(event) && !riscv_pmu_ctr_valid(event))
+		return -EOPNOTSUPP;
+
 	if (static_branch_likely(&riscv_pmu_cdeleg_available) && !pmu_sbi_is_fw_event(event))
 		return rvpmu_deleg_event_map(event, econfig);
 	else
@@ -1207,6 +1223,8 @@ static int rvpmu_starting_cpu(unsigned int cpu, struct hlist_node *node)
 		enable_percpu_irq(riscv_pmu_irq, IRQ_TYPE_NONE);
 	}
 
+	riscv_pmu_ctr_starting_cpu();
+
 	return 0;
 }
 
@@ -1218,6 +1236,7 @@ static int rvpmu_dying_cpu(unsigned int cpu, struct hlist_node *node)
 
 	/* Disable all counters access for user mode now */
 	csr_write(CSR_SCOUNTEREN, 0x0);
+	riscv_pmu_ctr_dying_cpu();
 
 	return 0;
 }
@@ -1329,6 +1348,29 @@ static void riscv_pmu_destroy(struct riscv_pmu *pmu)
 {
 	riscv_pm_pmu_unregister(pmu);
 	cpuhp_state_remove_instance(CPUHP_AP_PERF_RISCV_STARTING, &pmu->node);
+}
+
+static int branch_records_alloc(struct riscv_pmu *pmu)
+{
+	struct branch_records __percpu *tmp_alloc_ptr;
+	struct branch_records *records;
+	struct cpu_hw_events *events;
+	int cpu;
+
+	if (!riscv_pmu_ctr_supported(pmu))
+		return 0;
+
+	tmp_alloc_ptr = alloc_percpu_gfp(struct branch_records, GFP_KERNEL);
+	if (!tmp_alloc_ptr)
+		return -ENOMEM;
+
+	for_each_possible_cpu(cpu) {
+		events = per_cpu_ptr(pmu->hw_events, cpu);
+		records = per_cpu_ptr(tmp_alloc_ptr, cpu);
+		events->branches = records;
+	}
+
+	return 0;
 }
 
 static void rvpmu_event_init(struct perf_event *event)
@@ -1490,6 +1532,12 @@ static int rvpmu_device_probe(struct platform_device *pdev)
 		pmu->pmu.attr_groups = riscv_cdeleg_pmu_attr_groups;
 	else
 		pmu->pmu.attr_groups = riscv_sbi_pmu_attr_groups;
+
+	riscv_pmu_ctr_init(pmu);
+	ret = branch_records_alloc(pmu);
+	if (ret)
+		goto out_ctr_finish;
+
 	pmu->cmask = cmask;
 	pmu->ctr_start = rvpmu_ctr_start;
 	pmu->ctr_stop = rvpmu_ctr_stop;
@@ -1506,7 +1554,7 @@ static int rvpmu_device_probe(struct platform_device *pdev)
 
 	ret = cpuhp_state_add_instance(CPUHP_AP_PERF_RISCV_STARTING, &pmu->node);
 	if (ret)
-		return ret;
+		goto out_ctr_finish;
 
 	ret = riscv_pm_pmu_register(pmu);
 	if (ret)
@@ -1522,6 +1570,9 @@ static int rvpmu_device_probe(struct platform_device *pdev)
 
 out_unregister:
 	riscv_pmu_destroy(pmu);
+
+out_ctr_finish:
+	riscv_pmu_ctr_finish(pmu);
 
 out_free:
 	kfree(pmu);
