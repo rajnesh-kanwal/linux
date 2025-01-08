@@ -167,6 +167,13 @@ properties:
 	    extension allows other ISA extension to use indirect CSR access
 	    mechanism in M-mode.
 
+        - const: smctr
+          description: |
+            The standard Smctr supervisor-level extension for the machine mode
+            to enable recording limited branch history in a register-accessible
+            internal core storage. Smctr depend on both the implementation of
+            S-mode and the Sscsrind extension.
+
 	- const: sscsrind
           description: |
             The standard Sscsrind supervisor-level extension extends the
@@ -192,6 +199,13 @@ properties:
             The standard Sscofpmf supervisor-level extension for count overflow
             and mode-based filtering as ratified at commit 01d1df0 ("Add ability
             to manually trigger workflow. (#2)") of riscv-count-overflow.
+
+        - const: ssctr
+          description: |
+            The standard Ssctr supervisor-level extension enables recording of
+            limited branch history in a register-accessible internal core
+            storage. Ssctr depend on both the implementation of S-mode and the
+            Sscsrind extension.
 
         - const: ssnpm
           description: |
